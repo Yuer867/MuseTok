@@ -9,7 +9,8 @@ BEAT_RESOL = 480
 TICK_RESOL = BEAT_RESOL // 12
 TRIPLET_RESOL = BEAT_RESOL // 24
 
-DEFAULT_TIME_SIGNATURE = ['4/4', '2/4', '1/4', '3/4', '6/4', '2/2', '3/2', '3/8', '4/8', '6/8', '9/8', '12/8']
+# DEFAULT_TIME_SIGNATURE = ['4/4', '2/4', '1/4', '3/4', '6/4', '2/2', '3/2', '3/8', '4/8', '6/8', '9/8', '12/8']
+DEFAULT_TIME_SIGNATURE = ['4/4', '2/4', '3/4', '2/2', '3/8', '6/8']
 DEFAULT_VELOCITY_BINS = np.linspace(4, 127, 42, dtype=int)
 DEFAULT_DURATION_BINS = np.arange(BEAT_RESOL / 12, BEAT_RESOL * 8 + 1, BEAT_RESOL / 12)
 
@@ -40,7 +41,7 @@ def build_full_vocab(add_velocity=True):
         numerator, denominator = t.split('/')
         quarters_per_bar = 4 * int(numerator) / int(denominator)
         bar_resol = int(BEAT_RESOL * quarters_per_bar)
-        default_onset = np.unique(np.concat([np.arange(0, bar_resol, TRIPLET_RESOL*4), np.arange(0, bar_resol, TICK_RESOL*3), np.array([bar_resol])]))
+        default_onset = np.unique(np.concat([np.arange(0, bar_resol, TRIPLET_RESOL*4), np.arange(0, bar_resol, TICK_RESOL*3)]))
         for onset in default_onset:
             vocab.append('Beat_{}'.format(onset // TICK_RESOL))
         # for timing in range(0, bar_resol, TICK_RESOL):
@@ -97,9 +98,9 @@ def events2dictionary(event_path, dictionary_path, add_velocity=False):
 
 
 if __name__ == '__main__':
-    dictionary_path = '/deepfreeze/jingyue/data/dictionary_strict.pkl'
-    events_path = '/deepfreeze/jingyue/data/EMOPIA/data_events_timeLast_strict'
-    events2dictionary(events_path, dictionary_path, add_velocity=True)
+    dictionary_path = '/deepfreeze/jingyue/data/dictionary_strict_noVelocity.pkl'
+    events_path = '/deepfreeze/jingyue/data/Hymnal-Folk/data_events_timeLast_repeatBeat_noVelocity_strict_noOverlap'
+    events2dictionary(events_path, dictionary_path, add_velocity=False)
     
     # vocab = build_full_vocab(add_velocity=True)
     # print(sorted(set(vocab), key=lambda x: (not isinstance(x, int), x)))

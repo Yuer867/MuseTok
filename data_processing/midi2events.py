@@ -552,11 +552,12 @@ def midi2events(file):
                                     repeat_beat=repeat_beat, 
                                     remove_short=False)
         num_notes = sum([1 for i in events if i['name'] == 'Note_Pitch'])
+        num_events = len(events)
         pickle.dump((pos, events), open(output_path, 'wb'))
     except Exception:
-        return 1, 0, 0
+        return 1, 0, 0, 0
 
-    return 0, len(pos), num_notes
+    return 0, len(pos), num_notes, num_events
 
 
 def midi2events_PDMX(file):
@@ -578,11 +579,12 @@ def midi2events_PDMX(file):
                                     repeat_beat=repeat_beat, 
                                     remove_short=True)
         num_notes = sum([1 for i in events if i['name'] == 'Note_Pitch'])
+        num_events = len(events)
         pickle.dump((pos, events), open(output_path, 'wb'))
     except Exception:
-        return 1, 0, 0
+        return 1, 0, 0, 0
 
-    return 0, len(pos), num_notes
+    return 0, len(pos), num_notes, num_events
 
 
 if __name__ == '__main__':
@@ -590,11 +592,11 @@ if __name__ == '__main__':
     convert midi to events
     """
     # events_path = 'data_events_timeLast_repeatBeat_noVelocity'
-    events_path = 'data_events_timeLast_strict'
+    events_path = 'data_events_timeLast_repeatBeat_noVelocity_strict_noOverlap'
     time_first = False
-    has_velocity = True
-    repeat_beat = False
-    remove_overlap = False
+    has_velocity = False
+    repeat_beat = True
+    remove_overlap = True
     print('time first: {}, has velocity: {}, repeat beat: {}, remove overlap: {}'.format(
             time_first, has_velocity, repeat_beat, remove_overlap))
     
@@ -660,3 +662,6 @@ if __name__ == '__main__':
     
     ave_note = sum([i[2] for i in results]) / (len(midi_files) - bad_files)
     print('Average number of notes is', ave_note)
+
+    ave_events = sum([i[3] for i in results]) / (len(midi_files) - bad_files)
+    print('Average number of events is', ave_events)

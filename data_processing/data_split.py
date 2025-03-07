@@ -8,8 +8,11 @@ import miditoolkit
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from collections import defaultdict
+import random
+random.seed(42)
 
-DEFAULT_TIME_SIGNATURE = ['4/4', '2/4', '1/4', '3/4', '6/4', '2/2', '3/2', '3/8', '4/8', '6/8', '9/8', '12/8']
+# DEFAULT_TIME_SIGNATURE = ['4/4', '2/4', '1/4', '3/4', '6/4', '2/2', '3/2', '3/8', '4/8', '6/8', '9/8', '12/8']
+DEFAULT_TIME_SIGNATURE = ['4/4', '2/4', '3/4', '2/2', '3/8', '6/8']
 
 
 def pickle_load(f):
@@ -225,21 +228,48 @@ def split_PDMX(output_dir):
     invalid_files = sum([i[0] for i in results])
     train_monophonic_set = [i[1] for i in results if i[2] == 'train' and i[3] == 'monophonic']
     train_polyphonic_set = [i[1] for i in results if i[2] == 'train' and i[3] == 'polyphonic']
-    valid_set = [i[1] for i in results if i[2] == 'valid']
+    train_set = train_monophonic_set + train_polyphonic_set
+    
+    valid_monophonic_set = [i[1] for i in results if i[2] == 'valid' and i[3] == 'monophonic']
+    valid_polyphonic_set = [i[1] for i in results if i[2] == 'valid' and i[3] == 'polyphonic']
+    valid_set = valid_monophonic_set + valid_polyphonic_set
+    
     test_monophonic_set = [i[1] for i in results if i[2] == 'test' and i[3] == 'monophonic']
     test_polyphonic_set = [i[1] for i in results if i[2] == 'test' and i[3] == 'polyphonic']
+    test_set = test_monophonic_set + test_polyphonic_set
     
-    # pickle.dump(train_monophonic_set, open(os.path.join(output_dir, 'train_mono.pkl'), 'wb'))
-    # pickle.dump(train_polyphonic_set, open(os.path.join(output_dir, 'train_poly.pkl'), 'wb'))
-    # pickle.dump(valid_set, open(os.path.join(output_dir, 'valid.pkl'), 'wb'))
+    pickle.dump(train_set, open(os.path.join(output_dir, 'train.pkl'), 'wb'))
+    pickle.dump(train_monophonic_set, open(os.path.join(output_dir, 'train_mono.pkl'), 'wb'))
+    pickle.dump(train_polyphonic_set, open(os.path.join(output_dir, 'train_poly.pkl'), 'wb'))
+    
+    pickle.dump(valid_set, open(os.path.join(output_dir, 'valid.pkl'), 'wb'))
+    pickle.dump(valid_monophonic_set, open(os.path.join(output_dir, 'valid_mono.pkl'), 'wb'))
+    pickle.dump(valid_polyphonic_set, open(os.path.join(output_dir, 'valid_poly.pkl'), 'wb'))
+    
+    pickle.dump(test_set, open(os.path.join(output_dir, 'test.pkl'), 'wb'))
     pickle.dump(test_monophonic_set, open(os.path.join(output_dir, 'test_mono.pkl'), 'wb'))
     pickle.dump(test_polyphonic_set, open(os.path.join(output_dir, 'test_poly.pkl'), 'wb'))
+    
+    density2files_train = {'monophonic': train_monophonic_set, 
+                           'polyphonic': train_polyphonic_set}
+    pickle.dump(density2files_train, open(os.path.join(output_dir, 'density2pieces_train.pkl'), 'wb'))
+    
+    density2files_valid = {'monophonic': valid_monophonic_set, 
+                           'polyphonic': valid_polyphonic_set}
+    pickle.dump(density2files_valid, open(os.path.join(output_dir, 'density2pieces_valid.pkl'), 'wb'))
+    
+    density2files_test = {'monophonic': test_monophonic_set, 
+                           'polyphonic': test_polyphonic_set}
+    pickle.dump(density2files_test, open(os.path.join(output_dir, 'density2pieces_test.pkl'), 'wb'))
 
-    num_files = len(train_monophonic_set) + len(train_polyphonic_set) + len(valid_set) + len(test_monophonic_set) + len(test_polyphonic_set)
+    num_files = len(train_monophonic_set) + len(train_polyphonic_set) + \
+                len(valid_monophonic_set) + len(valid_polyphonic_set) + \
+                len(test_monophonic_set) + len(test_polyphonic_set)
     print(' > num files: ', num_files)
-    print(' > train (monophonic), train (polyphonic), valid, test:', 
-            len(train_monophonic_set), len(train_polyphonic_set), len(valid_set), 
-            len(test_monophonic_set) + len(test_polyphonic_set))
+    print(' > train: {} ({} + {}), valid: {} ({} + {}), test: {} ({} + {})'.format(
+            len(train_set), len(train_monophonic_set), len(train_polyphonic_set),
+            len(valid_set), len(valid_monophonic_set), len(valid_polyphonic_set), 
+            len(test_set), len(test_monophonic_set), len(test_polyphonic_set)))
     print(' > invalid files: ', invalid_files)
     print()
 
@@ -265,6 +295,8 @@ def combine_split(split_path, PDMX_split_path, output_dir):
     total_train_samples = []
     
     for file in glob(os.path.join(split_path, '*/train.pkl')):
+        if 'PDMX' in file:
+            continue
         total_train_performance += pickle_load(file)
         total_train_samples += pickle_load(file)
         
@@ -275,22 +307,43 @@ def combine_split(split_path, PDMX_split_path, output_dir):
     total_train_samples += pickle_load(os.path.join(PDMX_split_path, 'train_mono.pkl'))
 
     pickle.dump(total_train_samples, open(os.path.join(output_dir, 'all_train.pkl'), 'wb'))
-    # pickle.dump(total_train_polyphonic, open(os.path.join(output_dir, 'all_train_poly.pkl'), 'wb'))
-    # pickle.dump(total_train_monophonic, open(os.path.join(output_dir, 'all_train_mono.pkl'), 'wb'))
     all_files += len(total_train_polyphonic) + len(total_train_monophonic) + len(total_train_performance)
     
     density2files_train = {'monophonic': total_train_monophonic, 
-                    'polyphonic': total_train_polyphonic, 
-                    'performance': total_train_performance}
+                           'polyphonic': total_train_polyphonic, 
+                           'performance': total_train_performance}
     pickle.dump(density2files_train, open(os.path.join(output_dir, 'density2pieces_train.pkl'), 'wb'))
     
     print('processing valid set...')
+    total_valid_polyphonic = []
+    total_valid_monophonic = []
+    total_valid_performance = []
     total_valid_samples = []
+    
     for file in glob(os.path.join(split_path, '*/valid.pkl')):
+        if 'PDMX' in file:
+            continue
+        total_valid_performance += pickle_load(file)
         total_valid_samples += pickle_load(file)
-    # total_valid_samples += pickle_load(os.path.join(PDMX_split_path, 'valid.pkl'))
+        
+    total_valid_polyphonic += pickle_load(os.path.join(PDMX_split_path, 'valid_poly.pkl'))
+    total_valid_samples += pickle_load(os.path.join(PDMX_split_path, 'valid_poly.pkl'))
+    
+    total_valid_monophonic += pickle_load(os.path.join(PDMX_split_path, 'valid_mono.pkl'))
+    total_valid_samples += pickle_load(os.path.join(PDMX_split_path, 'valid_mono.pkl'))
+
     pickle.dump(total_valid_samples, open(os.path.join(output_dir, 'all_valid.pkl'), 'wb'))
-    all_files += len(total_valid_samples)
+    all_files += len(total_valid_polyphonic) + len(total_valid_monophonic) + len(total_valid_performance)
+    
+    density2files_valid = {'monophonic': total_valid_monophonic, 
+                           'polyphonic': total_valid_polyphonic, 
+                           'performance': total_valid_performance}
+    pickle.dump(density2files_valid, open(os.path.join(output_dir, 'density2pieces_valid.pkl'), 'wb'))
+    
+    small_valid_samples = total_valid_performance + \
+                          random.sample(total_valid_monophonic, 1200) + \
+                          random.sample(total_valid_polyphonic, 1200)
+    pickle.dump(small_valid_samples, open(os.path.join(output_dir, 'small_valid.pkl'), 'wb'))
     
     print('processing test set...')
     total_test_polyphonic = []
@@ -299,6 +352,8 @@ def combine_split(split_path, PDMX_split_path, output_dir):
     total_test_samples = []
     
     for file in glob(os.path.join(split_path, '*/test.pkl')):
+        if 'PDMX' in file:
+            continue
         total_test_performance += pickle_load(file)
         total_test_samples += pickle_load(file)
         
@@ -312,16 +367,18 @@ def combine_split(split_path, PDMX_split_path, output_dir):
     all_files += len(total_test_polyphonic) + len(total_test_monophonic) + len(total_test_performance)
     
     density2files_test = {'monophonic': total_test_monophonic, 
-                        'polyphonic': total_test_polyphonic, 
-                        'performance': total_test_performance}
+                          'polyphonic': total_test_polyphonic, 
+                          'performance': total_test_performance}
     pickle.dump(density2files_test, open(os.path.join(output_dir, 'density2pieces_test.pkl'), 'wb'))
     
     print(' > num files: ', all_files)
-    print(' > train, train (monophonic), train (polyphonic), train (performance), valid, test:', 
-            len(total_train_samples), len(total_train_monophonic), 
-            len(total_train_polyphonic), len(total_train_performance),
-            len(total_valid_samples), len(total_test_samples))
+    print(' > train: {} ({} + {} + {}), valid: {} ({} + {} + {}), test: {} ({} + {} + {})'.format(
+            len(total_train_samples), len(total_train_monophonic), len(total_train_polyphonic), len(total_train_performance), 
+            len(total_valid_samples), len(total_valid_monophonic), len(total_valid_polyphonic), len(total_valid_performance), 
+            len(total_test_samples), len(total_test_monophonic), len(total_test_polyphonic), len(total_test_performance)))
     print()
+    
+    return all_files
 
 
 def is_monophonic(events):
@@ -348,10 +405,11 @@ if __name__ == '__main__':
     #   - if have pre-designed split requirements for downstream tasks (e.g. EMOPIA, Pianist8), follow the previous works
     #   - if have multiple pieces came from the same songs because of different time signatures, make sure they will be included in the same set (e.g. PDMX)
     #   - otherwise randomly split
-    events_dir = 'data_events_timeLast'
-    split_dir = 'data_splits_timeLast'
-    PDMX_events_dir = 'data_events_timeLast'
-    PDMX_split_dir = 'data_splits_timeLast'
+    events_dir = 'data_events_timeLast_repeatBeat_noVelocity_strict_noOverlap'
+    split_dir = 'data_splits_timeLast_repeatBeat_noVelocity_strict_noOverlap'
+    
+    PDMX_events_dir = 'data_events_timeLast_repeatBeat_noVelocity_strict_noOverlap'
+    PDMX_split_dir = 'data_splits_timeLast_repeatBeat_noVelocity_strict_noOverlap'
     
     # print('EMOPIA')
     # emopia_files = split_emopia('/deepfreeze/jingyue/data/{}/EMOPIA/'.format(split_dir))
@@ -381,18 +439,18 @@ if __name__ == '__main__':
     # ragtime_files, invalid_files = split_others('/deepfreeze/jingyue/data/{}/Ragtime-perfect-Jazz/'.format(split_dir), 'Ragtime-perfect-Jazz')
     # assert ragtime_files + invalid_files == len(glob('/deepfreeze/jingyue/data/Ragtime-perfect-Jazz/{}/*.pkl'.format(events_dir)))
     
-    print('PDMX')
-    pdmx_files, invalid_files = split_PDMX('/deepfreeze/jingyue/data/{}/PDMX/'.format(split_dir))
-    assert pdmx_files + invalid_files == len(glob('/deepfreeze/jingyue/data/PDMX/{}/*/*/*.pkl'.format(events_dir)))
+    # print('PDMX')
+    # pdmx_files, invalid_files = split_PDMX('/deepfreeze/jingyue/data/{}/PDMX/'.format(split_dir))
+    # assert pdmx_files + invalid_files == len(glob('/deepfreeze/jingyue/data/PDMX/{}/*/*/*.pkl'.format(events_dir)))
     # pdmx_files = len(glob('/deepfreeze/jingyue/data/PDMX/{}/*/*/*.pkl'.format(PDMX_events_dir)))
     
     # combine all samples into super sets
     #  - for training, divide into polyphonic and monophonic pieces
     #  - for validation and test, simply add them together
-    # split_path = '/deepfreeze/jingyue/data/{}/'.format(split_dir)
-    # PDMX_split_path = '/deepfreeze/jingyue/data/{}/PDMX'.format(PDMX_split_dir)
-    # output_path = '/deepfreeze/jingyue/data/{}/all'.format(split_dir)
-    # os.makedirs(output_path, exist_ok=True)
-    # all_files = combine_split(split_path, PDMX_split_path, output_path)
+    split_path = '/deepfreeze/jingyue/data/{}/'.format(split_dir)
+    PDMX_split_path = '/deepfreeze/jingyue/data/{}/PDMX'.format(PDMX_split_dir)
+    output_path = '/deepfreeze/jingyue/data/{}/all'.format(split_dir)
+    os.makedirs(output_path, exist_ok=True)
+    all_files = combine_split(split_path, PDMX_split_path, output_path)
     # # assert emopia_files + pop1k7_files + pop909_files + pianist8_files + multipianomide_files + hymnal_files + pdmx_files
-    # assert emopia_files + pop1k7_files + pop909_files + multipianomide_files + hymnal_files + pdmx_files
+    # assert emopia_files + pop1k7_files + pop909_files + multipianomide_files + hymnal_files + pdmx_files == all_files
