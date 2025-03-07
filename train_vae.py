@@ -30,7 +30,7 @@ kl_max_beta = config['training']['kl_max_beta']
 free_bit_lambda = config['training']['free_bit_lambda']
 max_lr, min_lr = config['training']['max_lr'], config['training']['min_lr']
 
-ckpt_dir = './ckpt/enc_dec_12L-16_bars-seqlen_1280-vae-all-d{}-types-strict-noOverlap-augment'.format(mconf['d_latent'])
+ckpt_dir = './ckpt/enc_dec_12L-16_bars-seqlen_1280-vae-all-d{}-types-strict-noOverlap-augment-1'.format(mconf['d_latent'])
 params_dir = os.path.join(ckpt_dir, 'params/')
 optim_dir = os.path.join(ckpt_dir, 'optim/')
 pretrained_params_path = config['model']['pretrained_params_path']
@@ -298,7 +298,7 @@ if __name__ == "__main__":
     
     run = wandb.init(
         config=dict(**{"n_parameters": n_params}),
-        resume="allow", project='MMP', group='', name='', id='vae-all-balanced-d{}-types-strict-noOverlap-augment'.format(
+        resume="allow", project='MMP', group='', name='', id='vae-all-balanced-d{}-types-strict-noOverlap-augment-1'.format(
             mconf['d_latent']
             ))
 

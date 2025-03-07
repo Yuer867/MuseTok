@@ -30,7 +30,7 @@ kl_max_beta = config['training']['kl_max_beta']
 max_lr, min_lr = config['training']['max_lr'], config['training']['min_lr']
 
 # ckpt_dir = config['training']['ckpt_dir']
-ckpt_dir = './ckpt/enc_dec_12L-16_bars-seqlen_1280-rvq-all-n{}-s{}-d{}-beta1-types-strict-noOverlap-augment'.format(
+ckpt_dir = './ckpt/enc_dec_12L-16_bars-seqlen_1280-rvq-all-n{}-s{}-d{}-beta1-types-repeatBeat-noVelocity-strict-noOverlap-augment'.format(
             mconf['num_quantizers'], mconf['codebook_size'], mconf['d_latent'])
 params_dir = os.path.join(ckpt_dir, 'params/')
 optim_dir = os.path.join(ckpt_dir, 'optim/')
@@ -253,7 +253,8 @@ if __name__ == "__main__":
         model_enc_seqlen=config['data']['enc_seqlen'], 
         model_dec_seqlen=config['data']['dec_seqlen'], 
         model_max_bars=config['data']['max_bars'],
-        pieces=random.sample(pickle_load(config['data']['val_split']), 3000),
+        # pieces=random.sample(pickle_load(config['data']['val_split']), 3000),
+        pieces=pickle_load(config['data']['val_split']),
         pad_to_same=True, use_attr_cls=config['model']['use_attr_cls']
     )
     print ('[info]', '# training samples:', len(dset.pieces))
@@ -297,7 +298,7 @@ if __name__ == "__main__":
     
     run = wandb.init(
         config=dict(**{"n_parameters": n_params}),
-        resume="allow", project='MMP', group='', name='', id='rvq-all-balanced-n{}-s{}-d{}-beta1-types-strict-noOverlap-augment'.format(
+        resume="allow", project='MMP', group='', name='', id='rvq-all-balanced-n{}-s{}-d{}-beta1-types-repeatBeat-noVelocity-strict-noOverlap-augment'.format(
             mconf['num_quantizers'], mconf['codebook_size'], mconf['d_latent']
         ))
 

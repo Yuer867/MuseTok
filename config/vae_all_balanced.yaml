@@ -38,7 +38,7 @@ training:
     min_lr:           5.0e-6
     lr_warmup_steps:  200
     lr_decay_steps:   150000
-    no_kl_steps:      10000
+    no_kl_steps:      5000
     kl_cycle_steps:   5000
     kl_max_beta:      1.0
     free_bit_lambda:  0.25

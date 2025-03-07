@@ -1,11 +1,11 @@
 data:
     data_dir:         data
-    train_split:      data/data_splits_timeLast_strict_noOverlap/all/all_train.pkl
-    val_split:        data/data_splits_timeLast_strict_noOverlap/all/all_valid.pkl
-    test_split:       data/data_splits_timeLast_strict_noOverlap/all/all_test.pkl
-    vocab_path:       data/dictionary_strict.pkl
+    train_split:      data/data_splits_timeLast_repeatBeat_noVelocity_strict_noOverlap/all/all_train.pkl
+    val_split:        data/data_splits_timeLast_repeatBeat_noVelocity_strict_noOverlap/all/small_valid.pkl
+    test_split:       data/data_splits_timeLast_repeatBeat_noVelocity_strict_noOverlap/all/all_test.pkl
+    vocab_path:       data/dictionary_strict_noVelocity.pkl
     time_path:        ../data_events/data_pdmx_remi+_balanced_simplified/timeSig2pieces_piano.pkl
-    density_path:     data/data_splits_timeLast_strict_noOverlap/all/density2pieces_train.pkl
+    density_path:     data/data_splits_timeLast_repeatBeat_noVelocity_strict_noOverlap/all/density2pieces_train.pkl
     max_bars:         16
     enc_seqlen:       128
     dec_seqlen:       1280
@@ -26,15 +26,15 @@ model:
     d_embed:          512
     d_latent:         128   # vae
     num_quantizers:   8     # vae
-    codebook_size:    1024  # vae
+    codebook_size:    2048  # vae
     pretrained_params_path:  null
     pretrained_optim_path:   null
     use_attr_cls:     False
     rotation_trick:   True
-    rvq_type:         SimVQ # FSQ
+    rvq_type:         RVQ # FSQ, SimVQ
 
 training:
-    device:           cuda:0
+    device:           cuda:5
     ckpt_dir:         ./ckpt/enc_dec_12L-16_bars-seqlen_1280-rvq-pdmx-n4-s1024
     trained_steps:    0
     max_epochs:       1000

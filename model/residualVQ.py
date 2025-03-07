@@ -276,32 +276,35 @@ class TransformerResidualVQ(nn.Module):
         self.enc_out_proj = nn.Linear(enc_d_model, d_vae_latent)
         
         self.rvq_type = rvq_type
-        # if self.rvq_type == 'SimVQ':
-        #     self.residual_sim_vq = ResidualSimVQ(
-        #         dim=d_vae_latent,
-        #         num_quantizers=num_quantizers,
-        #         codebook_size=codebook_size,
-        #         rotation_trick=rotation_trick,
-        #         # shared_codebook=False,
-        #         # kmeans_init=True,
-        #         # kmeans_iters=10
-        #     )
-        # elif self.rvq_type == 'FSQ':
-        #     self.residual_fsq = ResidualFSQ(
-        #         dim=d_vae_latent,
-        #         num_quantizers=num_quantizers,
-        #         levels=[8, 5, 5, 5]
-        #     )
+        if self.rvq_type == 'SimVQ':
+            self.residual_sim_vq = ResidualSimVQ(
+                dim=d_vae_latent,
+                num_quantizers=num_quantizers,
+                codebook_size=codebook_size,
+                rotation_trick=rotation_trick,
+            )
+        elif self.rvq_type == 'FSQ':
+            self.residual_fsq = ResidualFSQ(
+                dim=d_vae_latent,
+                num_quantizers=num_quantizers,
+                levels=[8, 5, 5, 5]
+            )
+        elif self.rvq_type == 'RVQ':
+            self.residual_vq = ResidualVQ(
+                dim=d_vae_latent,
+                num_quantizers=num_quantizers,
+                codebook_size=codebook_size,
+                rotation_trick=rotation_trick,
+                kmeans_init=True,
+                kmeans_iters=10
+            )
             
-        self.residual_sim_vq = ResidualSimVQ(
-            dim=d_vae_latent,
-            num_quantizers=num_quantizers,
-            codebook_size=codebook_size,
-            rotation_trick=rotation_trick,
-            # shared_codebook=False,
-            # kmeans_init=True,
-            # kmeans_iters=10
-        )
+        # self.residual_sim_vq = ResidualSimVQ(
+        #     dim=d_vae_latent,
+        #     num_quantizers=num_quantizers,
+        #     codebook_size=codebook_size,
+        #     rotation_trick=rotation_trick,
+        # )
         
         # self.residual_fsq = ResidualFSQ(
         #     dim=d_vae_latent,
@@ -342,11 +345,13 @@ class TransformerResidualVQ(nn.Module):
         # [shape of vae_latent] (bsize, n_bars_per_sample, d_vae_latent)
         if self.rvq_type == 'SimVQ':
             vae_latent, indices, commit_loss = self.residual_sim_vq(enc_out)
+        elif self.rvq_type == 'RVQ':
+            vae_latent, indices, commit_loss = self.residual_vq(enc_out)
         elif self.rvq_type == 'FSQ':
             vae_latent, indices = self.residual_fsq(enc_out)
             commit_loss = None
         else:
-            raise ValueError("Wrong Residual Vector Quantization model {}, choose from ['SimVQ', 'FSQ'].".format(self.rvq_type))
+            raise ValueError("Wrong Residual Vector Quantization model {}, choose from ['SimVQ', 'FSQ', 'RVQ'].".format(self.rvq_type))
 
         dec_seg_emb = torch.zeros(dec_inp.size(0), dec_inp.size(1), self.d_vae_latent).to(vae_latent.device)
         for n in range(dec_inp.size(1)):
