@@ -1,11 +1,11 @@
 import os, pickle, random
 from glob import glob
-from collections import defaultdict
-
-import torch
 import numpy as np
 
+import torch
 from torch.utils.data import Dataset, DataLoader
+
+from utils import pickle_load
 
 IDX_TO_KEY = {
     0: 'A',
@@ -25,25 +25,6 @@ KEY_TO_IDX = {
     v:k for k, v in IDX_TO_KEY.items()
 }
 
-def get_chord_tone(chord_event):
-    tone = chord_event['value'].split('_')[0]
-    return tone
-
-def transpose_chord(chord_event, n_keys):
-    if chord_event['value'] == 'N_N':
-        return chord_event
-
-    orig_tone = get_chord_tone(chord_event)
-    orig_tone_idx = KEY_TO_IDX[orig_tone]
-    new_tone_idx = (orig_tone_idx + 12 + n_keys) % 12
-    new_chord_value = chord_event['value'].replace(
-        '{}_'.format(orig_tone), '{}_'.format(IDX_TO_KEY[new_tone_idx])
-    )
-    new_chord_event = {'name': chord_event['name'], 'value': new_chord_value}
-    # print ('keys={}. {} --> {}'.format(n_keys, chord_event, new_chord_event))
-
-    return new_chord_event
-
 def check_extreme_pitch(raw_events):
     low, high = 128, 0
     for ev in raw_events:
@@ -61,18 +42,12 @@ def transpose_events(raw_events, n_keys):
             transposed_raw_events.append(
                 {'name': ev['name'], 'value': int(ev['value']) + n_keys}
             )
-        elif ev['name'] == 'Chord':
-            transposed_raw_events.append(
-                transpose_chord(ev, n_keys)
-            )
         else:
             transposed_raw_events.append(ev)
 
     assert len(transposed_raw_events) == len(raw_events)
     return transposed_raw_events
 
-def pickle_load(path):
-    return pickle.load(open(path, 'rb'))
 
 def convert_event(event_seq, event2idx, to_ndarr=True):
     if isinstance(event_seq[0], dict):
@@ -89,9 +64,8 @@ class REMIFullSongTransformerDataset(Dataset):
     def __init__(self, data_dir, vocab_file, 
                 model_enc_seqlen=128, model_dec_seqlen=1280, model_max_bars=16,
                 pieces=[], do_augment=True, augment_range=range(-6, 7), 
-                min_pitch=22, max_pitch=107, pad_to_same=True, use_attr_cls=True,
+                min_pitch=22, max_pitch=107, pad_to_same=True, 
                 appoint_st_bar=None, dec_end_pad_value=None, 
-                balanced_time=False, time2pieces=None, 
                 balanced_density=False, density2pieces=None, 
                 shuffle=True):
         self.vocab_file = vocab_file
@@ -109,11 +83,6 @@ class REMIFullSongTransformerDataset(Dataset):
         self.augment_range = augment_range
         self.min_pitch, self.max_pitch = min_pitch, max_pitch
         self.pad_to_same = pad_to_same
-        self.use_attr_cls = use_attr_cls
-        
-        self.balanced_time = balanced_time
-        self.class_time_sig = ['4/4', '6/8', '2/4', '2/2', '3/4']
-        self.time2pieces = time2pieces
         
         self.balanced_density = balanced_density
         self.class_density = ['monophonic', 'polyphonic', 'performance']
@@ -208,18 +177,6 @@ class REMIFullSongTransformerDataset(Dataset):
         augmented_bar_events = transpose_events(bar_events, n_keys)
         return augmented_bar_events
 
-    def get_attr_classes(self, piece, st_bar):
-        polyph_cls = pickle_load(os.path.join(self.data_dir, 'attr_cls/polyph', piece))[st_bar : st_bar + self.model_max_bars]
-        rfreq_cls = pickle_load(os.path.join(self.data_dir, 'attr_cls/rhythm', piece))[st_bar : st_bar + self.model_max_bars]
-
-        polyph_cls.extend([0 for _ in range(self.model_max_bars - len(polyph_cls))])
-        rfreq_cls.extend([0 for _ in range(self.model_max_bars - len(rfreq_cls))])
-
-        assert len(polyph_cls) == self.model_max_bars
-        assert len(rfreq_cls) == self.model_max_bars
-
-        return polyph_cls, rfreq_cls
-
     def get_encoder_input_data(self, bar_positions, bar_events):
         assert len(bar_positions) == self.model_max_bars + 1
         enc_padding_mask = np.ones((self.model_max_bars, self.model_enc_seqlen), dtype=bool)
@@ -239,14 +196,7 @@ class REMIFullSongTransformerDataset(Dataset):
 
     def generate_queue(self):
         self.queue = []      
-        if self.balanced_time:
-            print('[preparing data] balanced time signature')
-            while len(self.queue) < len(self.pieces):
-                class_set = self.class_time_sig[:]
-                random.shuffle(class_set)
-                self.queue += [self.piece2idx[os.path.join(self.data_dir, self.time2pieces[d][random.randint(0, len(self.time2pieces[d]) - 1)])] for d in class_set]
-            self.queue = self.queue[:len(self.pieces)]
-        elif self.balanced_density:
+        if self.balanced_density:
             print('[preparing data] balanced note density')
             print('[preparing data] class: ', self.class_density)
             while len(self.queue) < len(self.pieces):
@@ -273,17 +223,6 @@ class REMIFullSongTransformerDataset(Dataset):
         if self.do_augment:
             bar_events = self.pitch_augment(bar_events)
 
-        if self.use_attr_cls:
-            polyph_cls, rfreq_cls = self.get_attr_classes(os.path.basename(self.pieces[idx]), st_bar)
-            polyph_cls_expanded = np.zeros((self.model_dec_seqlen,), dtype=int)
-            rfreq_cls_expanded = np.zeros((self.model_dec_seqlen,), dtype=int)
-            for i, (b_st, b_ed) in enumerate(zip(bar_pos[:-1], bar_pos[1:])):
-                polyph_cls_expanded[b_st:b_ed] = polyph_cls[i]
-                rfreq_cls_expanded[b_st:b_ed] = rfreq_cls[i]
-        else:
-            polyph_cls, rfreq_cls = [0], [0]
-            polyph_cls_expanded, rfreq_cls_expanded = [0], [0]
-
         bar_tokens = convert_event(bar_events, self.event2idx, to_ndarr=False)
         bar_pos = bar_pos.tolist() + [len(bar_tokens)]
 
@@ -308,16 +247,10 @@ class REMIFullSongTransformerDataset(Dataset):
             'enc_input': enc_inp,
             'dec_input': inp[:self.model_dec_seqlen],
             'dec_target': target[:self.model_dec_seqlen],
-            'polyph_cls': polyph_cls_expanded,
-            'rhymfreq_cls': rfreq_cls_expanded,
-            'polyph_cls_bar': np.array(polyph_cls),
-            'rhymfreq_cls_bar': np.array(rfreq_cls),
             'length': min(length, self.model_dec_seqlen),
             'enc_padding_mask': enc_padding_mask,
             'enc_length': enc_lens,
             'enc_n_bars': enc_n_bars,
-            # 'time_sig': bar_events[1]['value'],
-            # 'note_density': note_density
         }
 
 class RVQTokensDataset(Dataset):
@@ -453,33 +386,3 @@ class RVQTokensDataset(Dataset):
             'dec_bar_pos': bar_pos,
             'length': n_bars
         }
-
-
-if __name__ == "__main__":
-    # codes below are for unit test
-    dset = REMIFullSongTransformerDataset(
-        './remi_dataset', './pickles/remi_vocab.pkl', do_augment=True, use_attr_cls=True,
-        model_max_bars=16, model_dec_seqlen=1280, model_enc_seqlen=128, min_pitch=22, max_pitch=107
-    )
-    print (dset.bar_token, dset.pad_token, dset.vocab_size)
-    print ('length:', len(dset))
-
-    # for i in random.sample(range(len(dset)), 100):
-    # for i in range(len(dset)):
-    #   sample = dset[i]
-        # print (i, len(sample['bar_pos']), sample['bar_pos'])
-        # print (i)
-        # print ('******* ----------- *******')
-        # print ('piece: {}, st_bar: {}'.format(sample['piece_id'], sample['st_bar_id']))
-        # print (sample['enc_input'][:8, :16])
-        # print (sample['dec_input'][:16])
-        # print (sample['dec_target'][:16])
-        # print (sample['enc_padding_mask'][:32, :16])
-        # print (sample['length'])
-
-    dloader = DataLoader(dset, batch_size=4, shuffle=False, num_workers=24)
-    for i, batch in enumerate(dloader):
-        for k, v in batch.items():
-            if torch.is_tensor(v):
-                print (k, ':', v.dtype, v.size())
-        print ('=====================================\n')

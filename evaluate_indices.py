@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 
 from utils import load_txt, pickle_load, numpy_to_tensor, tensor_to_numpy
 from dataloader import REMIFullSongTransformerDataset
-from model.residualVQ import TransformerResidualVQ
+from model.musetok import TransformerResidualVQ
 
 def get_latent_indices(model, piece_data, device):
     # reshape

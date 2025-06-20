@@ -4,7 +4,7 @@ sys.path.append('./model')
 
 from remi2midi import remi2midi
 from dataloader import RVQTokensDataset, REMIFullSongTransformerDataset
-from model.residualVQ import GPT2TokensGenerator, TransformerGenerator, TransformerResidualVQ
+from model.musetok import GPT2TokensGenerator, TransformerGenerator, TransformerResidualVQ
 from utils import pickle_load, numpy_to_tensor, tensor_to_numpy, pickle_dump
 
 import torch

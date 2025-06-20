@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from transformers.models.gpt2.configuration_gpt2 import GPT2Config
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block
 
-from vector_quantize_pytorch import VectorQuantize, ResidualVQ, ResidualSimVQ, ResidualFSQ
+from vector_quantize_pytorch import ResidualVQ, ResidualSimVQ, ResidualFSQ
 
 from transformer_encoder import VAETransformerEncoder
 from transformer_helpers import (

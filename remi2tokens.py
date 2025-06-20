@@ -12,7 +12,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 from utils import pickle_load, pickle_dump, numpy_to_tensor, tensor_to_numpy
-from model.residualVQ import TransformerResidualVQ
+from model.musetok import TransformerResidualVQ
 
 config_path = sys.argv[1]
 config = yaml.load(open(config_path, 'r'), Loader=yaml.FullLoader)

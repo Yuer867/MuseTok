@@ -1,40 +1,28 @@
 import sys, os, random, time
-from copy import deepcopy
 sys.path.append('./model')
-
-from dataloader import REMIFullSongTransformerDataset
-from model.residualVQ import TransformerResidualVQ
-
-from utils import pickle_load, numpy_to_tensor, tensor_to_numpy, pickle_dump
-# Pop1k7
-from remi2midi import remi2midi
+import yaml
 from tqdm import tqdm
-
-# PDMX
-# from remiplus.input_representation import remi2midi  # PDMX-TODO
-
-# HookTheory
-# from convert2midi import event_to_midi
+from copy import deepcopy
 
 import torch
-import yaml
 import numpy as np
 from scipy.stats import entropy
+
+from dataloader import REMIFullSongTransformerDataset
+from model.musetok import TransformerResidualVQ
+from remi2midi import remi2midi
+from utils import pickle_load, numpy_to_tensor, tensor_to_numpy
 
 DEFAULT_TEMPO = 110
 
 config_path = sys.argv[1]
 config = yaml.load(open(config_path, 'r'), Loader=yaml.FullLoader)
-
 device = config['training']['device']
-data_dir = config['data']['data_dir']
-vocab_path = config['data']['vocab_path']
-data_split = config['data']['test_split']
 
 ckpt_path = sys.argv[2]
 out_dir = sys.argv[3]
 n_pieces = int(sys.argv[4])
-n_samples_per_piece = int(sys.argv[5])
+output_perplexity = False
 
 ###########################################
 # little helpers
@@ -64,22 +52,6 @@ def temperatured_softmax(logits, temperature):
         probs = probs.astype(float)
     return probs
 
-def nucleus(probs, p):
-    probs /= sum(probs)
-    sorted_probs = np.sort(probs)[::-1]
-    sorted_index = np.argsort(probs)[::-1]
-    cusum_sorted_probs = np.cumsum(sorted_probs)
-    after_threshold = cusum_sorted_probs > p
-    if sum(after_threshold) > 0:
-        last_index = np.where(after_threshold)[0][1]
-        candi_index = sorted_index[:last_index]
-    else:
-        candi_index = sorted_index[:3] # just assign a value
-    candi_probs = np.array([probs[i] for i in candi_index], dtype=np.float64)
-    candi_probs /= sum(candi_probs)
-    word = np.random.choice(candi_index, size=1, p=candi_probs)[0]
-    return word
-
 def top(probs):
     top_index = np.argmax(probs)
     top_prob = np.max(probs)
@@ -101,56 +73,20 @@ def get_latent_embedding(model, piece_data):
 
     return piece_latents
 
-def get_latent_indices(model, piece_data):
-    # reshape
-    batch_inp = piece_data['enc_input'].permute(1, 0).long().to(device)
-    batch_padding_mask = piece_data['enc_padding_mask'].bool().to(device)
-
-    # get latent conditioning vectors
-    with torch.no_grad():
-        _, indices = model.get_sampled_latent(
-            batch_inp, padding_mask=batch_padding_mask
-        )
-
-    return indices
-
-def add_pos(song):
-    new_song = []
-    current_pos = None
-    for i in range(len(song)):
-        if 'Position' in song[i]:
-            current_pos = song[i]
-        if 'Instrument' in song[i] and 'Position' not in song[i-1]:
-            new_song.append(current_pos)
-            
-        new_song.append(song[i])
-    return new_song
-            
-
 def generate_on_latent_ctrl_vanilla_truncate(
         model, latents, event2idx, idx2event, 
-        max_events=12800, primer=None,
-        max_input_len=1280, truncate_len=512,
+        max_events=12800, max_input_len=1280, truncate_len=512,
         time_signature=None
     ):
     latent_placeholder = torch.zeros(max_events, 1, latents.size(-1)).to(device)
-
-    if primer is None:
-        generated = [event2idx['Bar_None']]
-    else:
-        generated = [event2idx[e] for e in primer]
-        latent_placeholder[:len(generated), 0, :] = latents[0].squeeze(0)
-    
+    generated = [event2idx['Bar_None']]    
     target_bars, generated_bars = latents.size(0), 0
 
-    steps = 0
     time_st = time.time()
     cur_pos = 0
     failed_cnt = 0
 
-    cur_input_len = len(generated)
     generated_final = deepcopy(generated)
-    entropies = []
     perplexities = []
 
     while generated_bars < target_bars:
@@ -167,16 +103,12 @@ def generate_on_latent_ctrl_vanilla_truncate(
             logits = model.generate(dec_input, dec_seg_emb)
         logits = tensor_to_numpy(logits[0])
         probs = temperatured_softmax(logits, temperature=1.0)
-        # word = nucleus(probs, nucleus_p)
         word, prob = top(probs)
         word_event = idx2event[word]
 
         if 'Beat' in word_event:
             event_pos = get_beat_idx(word_event)
             if not event_pos >= cur_pos:
-                print(event_pos, cur_pos)
-                print([idx2event[word] for word in generated][-10:])
-                input()
                 failed_cnt += 1
                 print('[info] position not increasing, failed cnt:', failed_cnt)
                 if failed_cnt >= 10:
@@ -196,7 +128,6 @@ def generate_on_latent_ctrl_vanilla_truncate(
         if word_event == 'PAD_None':
             print('[info] generated padding token')
             continue
-            # break
         
         if 'Time_Signature' in word_event:
             if word_event != time_signature:
@@ -223,27 +154,11 @@ def generate_on_latent_ctrl_vanilla_truncate(
 
         generated.append(word)
         generated_final.append(word)
-        entropies.append(entropy(probs))
         perplexities.append(prob)
-
-        cur_input_len += 1
-        steps += 1
-
-        assert cur_input_len == len(generated)
-        if cur_input_len == max_input_len:
-            generated = generated[-truncate_len:]
-            latent_placeholder[:len(generated)-1, 0, :] = latent_placeholder[cur_input_len-truncate_len:cur_input_len-1, 0, :]
-
-            print('[info] reset context length: cur_len: {}, accumulated_len: {}, truncate_range: {} ~ {}'.format(
-                cur_input_len, len(generated_final), cur_input_len-truncate_len, cur_input_len-1
-            ))
-            cur_input_len = len(generated)
-            break
 
     # assert generated_bars == target_bars
     print('-- generated events:', len(generated_final))
     print('-- time elapsed: {:.2f} secs'.format(time.time() - time_st))
-    # return generated_final[:-1], time.time() - time_st, np.array(entropies), 
     perplexity = np.exp(-np.sum(np.log(perplexities)) / len(generated_final))
     return generated_final[:-1], time.time() - time_st, perplexity
 
@@ -285,26 +200,25 @@ def compute_perplexity(model, latents, inp, target, idx2event):
 
 if __name__ == "__main__":
     dset = REMIFullSongTransformerDataset(
-        data_dir, vocab_path, 
-        do_augment=True,
+        data_dir=config['data']['data_dir'], 
+        vocab_path=config['data']['vocab_path'], 
+        do_augment=False,
         model_enc_seqlen=config['data']['enc_seqlen'], 
-        model_dec_seqlen=config['generate']['dec_seqlen'],
-        model_max_bars=config['generate']['max_bars'],
-        pieces=pickle_load(data_split),
-        pad_to_same=False, use_attr_cls=config['model']['use_attr_cls'],
-        shuffle=False, appoint_st_bar=0
+        model_dec_seqlen=config['data']['dec_seqlen'], 
+        model_max_bars=config['data']['max_bars'],
+        pieces=pickle_load(config['data']['test_split']),
+        pad_to_same=False,
+        shuffle=False, 
+        appoint_st_bar=0
     )
     random.seed(42)
+    
+    # randomly sample pieces from test set
     pieces = random.sample(range(len(dset)), n_pieces)
-    selected_pieces = []
-    for p in pieces:
-        p_data = dset[p]
-        p_path = p_data['piece_path']
-        if 'PDMX' not in p_path:
-            selected_pieces.append(p)
-    # pieces = pickle_load('data/data_splits_timeLast/PDMX/test_poly.pkl')
-    pieces = pickle_load('data/data_splits_timeLast_strict/all/density2pieces_test.pkl')['monophonic'][:n_pieces]
-    # pieces = random.sample(pieces, n_pieces)
+
+    # randomly sample pieces from a specific category
+    pieces = pickle_load('data/data_splits_timeLast_strict/all/density2pieces_test.pkl')['performance']
+    pieces = random.sample(pieces, n_pieces)
     pieces = [dset.piece2idx[os.path.join(config['data']['data_dir'], piece)] for piece in pieces]
     print('[sampled pieces]', pieces)
     
@@ -313,8 +227,8 @@ if __name__ == "__main__":
         mconf['enc_n_layer'], mconf['enc_n_head'], mconf['enc_d_model'], mconf['enc_d_ff'],
         mconf['dec_n_layer'], mconf['dec_n_head'], mconf['dec_d_model'], mconf['dec_d_ff'],
         mconf['d_latent'], mconf['d_embed'], dset.vocab_size,
-        mconf['num_quantizers'], mconf['codebook_size'],
-        rvq_type=mconf['rvq_type']
+        mconf['num_quantizers'], mconf['codebook_size'], 
+        rotation_trick=mconf['rotation_trick'], rvq_type=mconf['rvq_type']
     ).to(device)
     model.eval()
     model.load_state_dict(torch.load(ckpt_path, map_location='cpu'))
@@ -363,60 +277,47 @@ if __name__ == "__main__":
                 p_data[k] = p_data[k].to(device)
 
         p_latents = get_latent_embedding(model, p_data)
-        # p_indices = get_latent_indices(model, p_data)
-        print(p_latents[0])
         
-        orig_perplexity = compute_perplexity(model, p_latents, p_data['dec_input'], p_data['dec_target'], dset.idx2event)
-        orig_piece_perplexities.append(orig_perplexity)
-        print('[info] orig piece perplexity: {:.4f}'.format(orig_perplexity))
+        if output_perplexity:
+            print('[info] compute orig piece perplexity ...')
+            orig_perplexity = compute_perplexity(model, p_latents, p_data['dec_input'], p_data['dec_target'], dset.idx2event)
+            orig_piece_perplexities.append(orig_perplexity)
+            print('[info] orig piece perplexity: {:.4f}'.format(orig_perplexity))
 
-        # piece_entropies = []
-        for samp in range(n_samples_per_piece):
-            print('[info] piece: {}, bar: {}'.format(p_id, p_bar_id))
+        print('[info] piece: {}, bar: {}'.format(p_id, p_bar_id))
+        out_file = os.path.join(out_dir, 'id{}_bar{}_sample'.format(p, p_bar_id))
+        print('[info] writing to ...', out_file)
+        if os.path.exists(out_file + '.txt'):
+            print('[info] file exists, skipping ...')
+            continue
 
-            out_file = os.path.join(out_dir, 'id{}_bar{}_sample{:02d}'.format(
-                p, p_bar_id, samp + 1))
-            
-            print('[info] writing to ...', out_file)
-            if os.path.exists(out_file + '.txt'):
-                print('[info] file exists, skipping ...')
-                continue
-
-            song, t_sec, perplexity = generate_on_latent_ctrl_vanilla_truncate(
-                                        model, p_latents, 
-                                        dset.event2idx, dset.idx2event,
-                                        max_events=12800,
-                                        max_input_len=config['generate']['max_input_dec_seqlen'], 
-                                        # max_input_len=2500,
-                                        truncate_len=min(512, config['generate']['max_input_dec_seqlen'] - 32), 
-                                        # nucleus_p=config['generate']['nucleus_p'], 
-                                        # temperature=config['generate']['temperature'],
-                                        time_signature=orig_song_time
-                                    )
-            times.append(t_sec)
-
-            song = word2event(song, dset.idx2event)
-            
-            print(*song, sep='\n', file=open(out_file + '.txt', 'a'))
-            remi2midi(song, out_file + '.mid', enforce_tempo=True, enforce_tempo_val=[TempoEvent(DEFAULT_TEMPO, 0, 0, 4, 4)])
-            
-            # print ('[info] piece entropy: {:.4f} (+/- {:.4f})'.format(
-            #     entropies.mean(), entropies.std()
-            # ))
-            # piece_entropies.append(entropies.mean())
-            print ('[info] piece perplexity: {:.4f}'.format(perplexity))
-            gene_piece_perplexities.append(perplexity)
+        song, t_sec, perplexity = generate_on_latent_ctrl_vanilla_truncate(
+                                    model, p_latents, 
+                                    dset.event2idx, dset.idx2event,
+                                    max_events=12800,
+                                    max_input_len=config['generate']['max_input_dec_seqlen'], 
+                                    # max_input_len=2500,
+                                    truncate_len=min(512, config['generate']['max_input_dec_seqlen'] - 32), 
+                                    time_signature=orig_song_time
+                                )
+        times.append(t_sec)
+        song = word2event(song, dset.idx2event)
+        
+        print(*song, sep='\n', file=open(out_file + '.txt', 'a'))
+        remi2midi(song, out_file + '.mid', enforce_tempo=True, enforce_tempo_val=[TempoEvent(DEFAULT_TEMPO, 0, 0, 4, 4)])
+        
+        print ('[info] piece perplexity: {:.4f}'.format(perplexity))
+        gene_piece_perplexities.append(perplexity)
 
     print ('[time stats] {} songs, generation time: {:.2f} secs (+/- {:.2f})'.format(
-        n_pieces * n_samples_per_piece, np.mean(times), np.std(times)
+        n_pieces, np.mean(times), np.std(times)
     ))
-    # print ('[entropy] {:.4f} (+/- {:.4f})'.format(
-    #     np.mean(piece_entropies), np.std(piece_entropies)
-    # ))
     
-    print ('[orig perplexity] {:.4f} (+/- {:.4f})'.format(
-        np.mean(orig_piece_perplexities), np.std(orig_piece_perplexities)
-    ))
+    if output_perplexity:
+        print ('[orig perplexity] {:.4f} (+/- {:.4f})'.format(
+            np.mean(orig_piece_perplexities), np.std(orig_piece_perplexities)
+        ))
+        
     print ('[gene perplexity] {:.4f} (+/- {:.4f})'.format(
         np.mean(gene_piece_perplexities), np.std(gene_piece_perplexities)
     ))

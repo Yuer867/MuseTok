@@ -1,7 +1,7 @@
 import sys, os, time
 sys.path.append('./model')
 
-from model.residualVQ import GPT2TokensGenerator
+from model.musetok import GPT2TokensGenerator
 from dataloader import RVQTokensDataset
 from torch.utils.data import DataLoader
 
