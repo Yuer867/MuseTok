@@ -4,10 +4,8 @@ import torch.nn.functional as F
 
 from transformers.models.gpt2.configuration_gpt2 import GPT2Config
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block
-
 from vector_quantize_pytorch import ResidualVQ, ResidualSimVQ, ResidualFSQ
 
-from transformer_encoder import VAETransformerEncoder
 from transformer_helpers import (
     weights_init, PositionalEncoding, TokenEmbedding, generate_causal_mask
 )
@@ -67,6 +65,35 @@ class TransformerDecoder(nn.Module):
         return out
 
 
+class TransformerVAEEncoder(nn.Module):
+    def __init__(self, n_layer, n_head, d_model, d_ff, d_vae_latent, dropout=0.1, activation='relu'):
+        super(TransformerVAEEncoder, self).__init__()
+        self.n_layer = n_layer
+        self.n_head = n_head
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.d_vae_latent = d_vae_latent
+        self.dropout = dropout
+        self.activation = activation
+
+        self.tr_encoder_layer = nn.TransformerEncoderLayer(
+        d_model, n_head, d_ff, dropout, activation
+        )
+        self.tr_encoder = nn.TransformerEncoder(
+        self.tr_encoder_layer, n_layer
+        )
+
+        self.fc_mu = nn.Linear(d_model, d_vae_latent)
+        self.fc_logvar = nn.Linear(d_model, d_vae_latent)
+
+    def forward(self, x, padding_mask=None):
+        out = self.tr_encoder(x, src_key_padding_mask=padding_mask)
+        hidden_out = out[0, :, :]
+        mu, logvar = self.fc_mu(hidden_out), self.fc_logvar(hidden_out)
+
+        return hidden_out, mu, logvar
+
+
 class TransformerVAE(nn.Module):
     def __init__(self, enc_n_layer, enc_n_head, enc_d_model, enc_d_ff, 
                 dec_n_layer, dec_n_head, dec_d_model, dec_d_ff,
@@ -98,7 +125,7 @@ class TransformerVAE(nn.Module):
         self.emb_dropout = nn.Dropout(self.enc_dropout)
         self.pe = PositionalEncoding(d_embed)
         
-        self.encoder = VAETransformerEncoder(
+        self.encoder = TransformerVAEEncoder(
             enc_n_layer, enc_n_head, enc_d_model, enc_d_ff, d_vae_latent, enc_dropout, enc_activation
         )
         self.enc_out_proj = nn.Linear(enc_d_model, d_vae_latent)
@@ -298,19 +325,6 @@ class TransformerResidualVQ(nn.Module):
                 kmeans_init=True,
                 kmeans_iters=10
             )
-            
-        # self.residual_sim_vq = ResidualSimVQ(
-        #     dim=d_vae_latent,
-        #     num_quantizers=num_quantizers,
-        #     codebook_size=codebook_size,
-        #     rotation_trick=rotation_trick,
-        # )
-        
-        # self.residual_fsq = ResidualFSQ(
-        #     dim=d_vae_latent,
-        #     num_quantizers=num_quantizers,
-        #     levels=[8, 5, 5, 5]
-        # )
         
         self.decoder = TransformerDecoder(
             dec_n_layer, dec_n_head, dec_d_model, dec_d_ff, d_vae_latent, dec_dropout, dec_activation
@@ -318,7 +332,6 @@ class TransformerResidualVQ(nn.Module):
         self.dec_out_proj = nn.Linear(dec_d_model, n_token)
         
         self.apply(weights_init)
-        
         
     def forward(self, enc_inp, dec_inp, dec_inp_bar_pos, padding_mask=None):
         # [shape of enc_inp] (seqlen_per_bar, bsize, n_bars_per_sample)
@@ -364,23 +377,15 @@ class TransformerResidualVQ(nn.Module):
         dec_logits = self.dec_out_proj(dec_out)
 
         return dec_logits, commit_loss
-            
 
-    def compute_loss(self, commit_loss, beta, dec_logits, dec_tgt, weighted_loss=False, weight=None):
-        if weighted_loss and weight is not None:
-            recons_loss = F.cross_entropy(
-                dec_logits.view(-1, dec_logits.size(-1)), dec_tgt.contiguous().view(-1), 
-                ignore_index=self.n_token - 1, reduction='none')
-            recons_loss = torch.mean(recons_loss * weight).float()
-        else:
-            recons_loss = F.cross_entropy(
-                dec_logits.view(-1, dec_logits.size(-1)), dec_tgt.contiguous().view(-1), 
-                ignore_index=self.n_token - 1, reduction='mean'
-            ).float()
+    def compute_loss(self, commit_loss, beta, dec_logits, dec_tgt):
+        recons_loss = F.cross_entropy(
+            dec_logits.view(-1, dec_logits.size(-1)), dec_tgt.contiguous().view(-1), 
+            ignore_index=self.n_token - 1, reduction='mean'
+        ).float()
 
         if commit_loss is not None:
             commit_loss = commit_loss.sum().float()
-            
             return {
                 'beta': beta,
                 'total_loss': recons_loss + beta * commit_loss,
@@ -389,7 +394,6 @@ class TransformerResidualVQ(nn.Module):
             }
         else:
             commit_loss = torch.zeros_like(recons_loss)
-            
             return {
                 'beta': beta,
                 'total_loss': recons_loss,
@@ -451,96 +455,13 @@ class TransformerResidualVQ(nn.Module):
             indices = indices.squeeze(0)
 
         return vae_latent, indices
-    
-    def get_encoder_latent(self, inp, padding_mask=None):
-        token_emb = self.token_emb(inp)
-        enc_inp = self.emb_dropout(token_emb) + self.pe(inp.size(0))
-        
-        enc_out = self.encoder(enc_inp, padding_mask=padding_mask)
-        enc_out = self.enc_out_proj(enc_out)
-        
-        return enc_out
 
 
-class TransformerGenerator(nn.Module):
-    def __init__(self, dec_n_layer, dec_n_head, dec_d_model, dec_d_ff,
-                d_vae_latent, d_embed, n_token,
-                dec_dropout=0.1, dec_activation='relu',
-                is_training=True):
-        super(TransformerGenerator, self).__init__()
-        self.dec_n_layer = dec_n_layer
-        self.dec_n_head = dec_n_head
-        self.dec_d_model = dec_d_model
-        self.dec_d_ff = dec_d_ff
-        self.dec_dropout = dec_dropout
-        self.dec_activation = dec_activation
-
-        self.d_vae_latent = d_vae_latent
-        self.d_embed = d_embed
-        self.n_token = n_token
-        self.is_training = is_training
-
-        self.token_emb = TokenEmbedding(n_token, d_embed, dec_d_model)
-        self.emb_dropout = nn.Dropout(self.dec_dropout)
-        self.pe = PositionalEncoding(d_embed)
-
-        self.decoder = TransformerDecoder(
-            dec_n_layer, dec_n_head, dec_d_model, dec_d_ff, d_vae_latent, dec_dropout, dec_activation
-        )
-        self.dec_out_proj = nn.Linear(dec_d_model, n_token)
-        
-        self.apply(weights_init)
-        
-        
-    def forward(self, vae_latent, dec_inp, dec_inp_bar_pos):
-        # [shape of dec_inp] (seqlen_per_sample, bsize)
-        dec_token_emb = self.token_emb(dec_inp)
-        dec_inp = self.emb_dropout(dec_token_emb) + self.pe(dec_inp.size(0))
-
-        dec_seg_emb = torch.zeros(dec_inp.size(0), dec_inp.size(1), self.d_vae_latent).to(vae_latent.device)
-        for n in range(dec_inp.size(1)):
-        # [shape of dec_inp_bar_pos] (bsize, n_bars_per_sample + 1)
-        # -- stores [[start idx of bar #1, sample #1, ..., start idx of bar #K, sample #1, seqlen of sample #1], [same for another sample], ...]
-            for b, (st, ed) in enumerate(zip(dec_inp_bar_pos[n, :-1], dec_inp_bar_pos[n, 1:])):
-                dec_seg_emb[st:ed, n, :] = vae_latent[n, b, :]
-
-        dec_out = self.decoder(dec_inp, dec_seg_emb)
-        dec_logits = self.dec_out_proj(dec_out)
-
-        return dec_logits
-            
-
-    def compute_loss(self, dec_logits, dec_tgt, weighted_loss=False, weight=None):
-        if weighted_loss and weight is not None:
-            recons_loss = F.cross_entropy(
-                dec_logits.view(-1, dec_logits.size(-1)), dec_tgt.contiguous().view(-1), 
-                ignore_index=self.n_token - 1, reduction='none')
-            recons_loss = torch.mean(recons_loss * weight).float()
-        else:
-            recons_loss = F.cross_entropy(
-                dec_logits.view(-1, dec_logits.size(-1)), dec_tgt.contiguous().view(-1), 
-                ignore_index=self.n_token - 1, reduction='mean'
-            ).float()
-            
-        return {'recons_loss': recons_loss}
-    
-    def generate(self, inp, dec_seg_emb, keep_last_only=True):
-        token_emb = self.token_emb(inp)
-        dec_inp = self.emb_dropout(token_emb) + self.pe(inp.size(0))
-        out = self.decoder(dec_inp, dec_seg_emb)
-        out = self.dec_out_proj(out)
-
-        if keep_last_only:
-            out = out[-1, ...]
-
-        return out
-
-
-class GPT2TokensGenerator(nn.Module):
+class GPT2TokenGenerator(nn.Module):
     def __init__(self, dec_n_layer, dec_n_head, dec_d_model, dec_d_ff,
                 d_embed, n_token, n_bar, dec_dropout=0.1, dec_activation='relu',
                 use_bar_emb=True, is_training=True):
-        super(GPT2TokensGenerator, self).__init__()
+        super(GPT2TokenGenerator, self).__init__()
         self.dec_n_layer = dec_n_layer
         self.dec_n_head = dec_n_head
         self.dec_d_model = dec_d_model
@@ -553,7 +474,7 @@ class GPT2TokensGenerator(nn.Module):
         self.is_training = is_training
 
         self.token_emb = TokenEmbedding(n_token, d_embed, dec_d_model)
-        self.emb_dropout = nn.Dropout(self.dec_dropout)
+        self.emb_dropout = nn.Dropout(dec_dropout)
         self.pe = PositionalEncoding(dec_d_model)
         
         self.n_bar = n_bar
@@ -577,13 +498,10 @@ class GPT2TokensGenerator(nn.Module):
         
         self.apply(weights_init)
         
-        
     def forward(self, dec_inp, bar_inp=None):
         dec_token_emb = self.token_emb(dec_inp)
-        
         if self.use_bar_emb and bar_inp is not None:
             dec_token_emb += self.bar_emb(bar_inp)
-
         dec_out = self.emb_dropout(dec_token_emb + self.pe(dec_inp.size(1)).permute(1, 0, 2))
         
         for i in range(self.dec_n_layer):
@@ -591,15 +509,14 @@ class GPT2TokensGenerator(nn.Module):
         dec_logits = self.dec_out_proj(dec_out)
 
         return dec_logits
-        
 
     def compute_loss(self, dec_logits, dec_tgt):
-        recons_loss = F.cross_entropy(
+        nll_loss = F.cross_entropy(
             dec_logits.view(-1, dec_logits.size(-1)), dec_tgt.contiguous().view(-1), 
             ignore_index=self.n_token - 1, reduction='mean'
         ).float()
         
-        return {'recons_loss': recons_loss}
+        return {'nll_loss': nll_loss}
     
     def generate(self, inp, bar_inp, keep_last_only=True):
         token_emb = self.token_emb(inp)
@@ -615,24 +532,3 @@ class GPT2TokensGenerator(nn.Module):
             out = out[:, -1, :]
 
         return out
-
-
-if __name__ == "__main__":
-    device = 'cuda:3'
-    model = TransformerResidualVQ(
-        enc_n_layer=12, enc_n_head=8, enc_d_model=512, enc_d_ff=2048, 
-        dec_n_layer=12, dec_n_head=8, dec_d_model=512, dec_d_ff=2048,
-        num_quantizers=8, codebook_size=128,
-        d_vae_latent=128, d_embed=512, n_token=300,
-        is_training=True).to(device)
-    model.train()
-    
-    enc_inp = torch.randint(0, 100, (128, 16, 16)).to(device)
-    dec_inp = torch.randint(0, 100, (1280, 16)).to(device)
-    dec_inp_bar_pos = torch.randint(0, 100, (16, 17)).to(device)
-    padding_mask = torch.rand((16, 16, 128)).to(device)
-    logits, commit_loss = model(enc_inp, dec_inp, dec_inp_bar_pos, padding_mask=padding_mask)
-    print(logits.shape)
-    print(commit_loss.shape)
-    print(commit_loss)
-    print(commit_loss.sum())

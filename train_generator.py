@@ -1,50 +1,42 @@
 import sys, os, time
 sys.path.append('./model')
 
-from model.musetok import GPT2TokensGenerator
-from dataloader import RVQTokensDataset
-from torch.utils.data import DataLoader
-
-from utils import pickle_load
-from torch import nn, optim
-import torch
-import numpy as np
 import wandb
 import shutil
+import numpy as np
+
+import torch
+from torch import optim
+from torch.utils.data import DataLoader
+
+from model.musetok import GPT2TokenGenerator
+from dataloader import RVQTokenDataset
+from utils import pickle_load
 
 import yaml
 config_path = sys.argv[1]
 config = yaml.load(open(config_path, 'r'), Loader=yaml.FullLoader)
 
 mconf = config['model']
+tconf = config['tokenizer']
 device = config['training']['device']
 trained_steps = config['training']['trained_steps']
 lr_decay_steps = config['training']['lr_decay_steps']
 lr_warmup_steps = config['training']['lr_warmup_steps']
 max_lr, min_lr = config['training']['max_lr'], config['training']['min_lr']
 
-# ckpt_dir = config['training']['ckpt_dir']
-ckpt_dir = './ckpt/gen_{}L_{}H_{}D_{}E-32_bars-all-density-timeLast-strict-noOverlap'.format(
-            mconf['dec_n_layer'], mconf['dec_n_head'], mconf['dec_d_model'], mconf['d_embed'])
+ckpt_dir = './ckpt/gen_{}L_{}H_{}D_{}E-16_bars-n{}-s{}-d{}'.format(
+            mconf['dec_n_layer'], mconf['dec_n_head'], mconf['dec_d_model'], mconf['d_embed'], 
+            tconf['num_quantizers'], tconf['codebook_size'], tconf['d_latent'])
 params_dir = os.path.join(ckpt_dir, 'params/')
 optim_dir = os.path.join(ckpt_dir, 'optim/')
 pretrained_params_path = config['model']['pretrained_params_path']
 pretrained_optim_path = config['model']['pretrained_optim_path']
 ckpt_interval = config['training']['ckpt_interval']
-log_interval = config['training']['log_interval']
 val_interval = config['training']['val_interval']
 
-def log_epoch(log_file, log_data, is_init=False):
-    if is_init:
-        with open(log_file, 'w') as f:
-            f.write('{:4} {:8} {:12} {:12}\n'.format('ep', 'steps', 'recons_loss', 'ep_time'))
 
-    with open(log_file, 'a') as f:
-        f.write('{:<4} {:<8} {:<12} {:<12}\n'.format(
-            log_data['ep'], log_data['steps'], round(log_data['recons_loss'], 5), round(log_data['time'], 2)
-        ))
-
-def train_model(epoch, model, dloader, dloader_val, optim, sched, val_rounds):
+def train_model(epoch, model, dloader, dloader_val, optim, sched):
     model.train()
 
     print ('[epoch {:03d}] training ...'.format(epoch))
@@ -72,155 +64,105 @@ def train_model(epoch, model, dloader, dloader_val, optim, sched, val_rounds):
             sched.step(trained_steps - lr_warmup_steps)
 
         # clip gradient & update model
-        losses['recons_loss'].backward()
+        losses['nll_loss'].backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
         optim.step()
         
-        recons_loss = losses['recons_loss'].item()
+        nll_loss = losses['nll_loss'].item()
         
-        # reconstruction accuracy
+        # generation accuracy
         pred = torch.argmax(dec_logits, dim=-1) == batch_dec_tgt
         length = batch_dec_lens.numpy()
-        if config['data']['first_token_only']:
-            acc = np.sum([torch.sum(pred[:length[i], i]).item() for i in range(len(length))]) / np.sum(length)
-        else:
-            acc = np.sum([torch.sum(pred[i, :(length[i] * config['data']['num_quantizers'])]).item() for i in range(len(length))]) / \
-                np.sum(length * config['data']['num_quantizers'])
+        acc = np.sum([torch.sum(pred[i, :length[i]]).item() for i in range(len(length))]) / np.sum(length)
 
-        print (' -- epoch {:03d} | batch {:03d}: \n\t * loss = (RC: {:.4f}), acc = {}, step = {}, time_elapsed = {:.2f} secs'.format(
-            epoch, batch_idx, recons_loss, acc, trained_steps, time.time() - st
+        print (' -- epoch {:03d} | batch {:03d}: \n\t * loss = (NLL: {:.4f}), acc = {}, step = {}, time_elapsed = {:.2f} secs'.format(
+            epoch, batch_idx, nll_loss, acc, trained_steps, time.time() - st
         ))
         
-        wandb.log({f"recons_loss": recons_loss}, step=trained_steps)
+        wandb.log({f"nll_loss": nll_loss}, step=trained_steps)
         wandb.log({f"acc": acc}, step=trained_steps)
 
-        if not trained_steps % log_interval:
-            log_data = {
-                'ep': epoch,
-                'steps': trained_steps,
-                'recons_loss': recons_loss,
-                'acc': acc,
-                'time': time.time() - st
-            }
-            log_epoch(
-                os.path.join(ckpt_dir, 'log.txt'), log_data, is_init=not os.path.exists(os.path.join(ckpt_dir, 'log.txt'))
-            )
-
         if not trained_steps % val_interval:
-            vallosses = validate(model, dloader_val, n_rounds=val_rounds)
-            with open(os.path.join(ckpt_dir, 'valloss.txt'), 'a') as f:
-                f.write('[step {}] RC: {:.4f} | ACC: {:.4f} [val] | RC: {:.4f} | ACC: {:.4f}\n'.format(
-                    trained_steps, 
-                    recons_loss, 
-                    acc,
-                    np.mean(vallosses[0]),
-                    np.mean(vallosses[1])
-                ))
+            vallosses = validate(model, dloader_val)
             
-            wandb.log({f"recons_loss_val": np.mean(vallosses[0])}, step=trained_steps)
+            wandb.log({f"nll_loss_val": np.mean(vallosses[0])}, step=trained_steps)
             wandb.log({f"acc_val": np.mean(vallosses[1])}, step=trained_steps)
             
             model.train()
 
         if not trained_steps % ckpt_interval:
-            try:
-                torch.save(model.state_dict(),
-                    os.path.join(params_dir, 'step_{:d}-RC_{:.3f}-model.pt'.format(
-                        trained_steps,
-                        recons_loss
-                    ))
-                )
-                torch.save(optim.state_dict(),
-                    os.path.join(optim_dir, 'step_{:d}-RC_{:.3f}-optim.pt'.format(
-                        trained_steps,
-                        recons_loss, 
-                    ))
-                )
-            except:
-                print('[info] save checkpoints failed')
+            torch.save(model.state_dict(),
+                os.path.join(params_dir, 'step_{:d}-NLL_{:.3f}-model.pt'.format(
+                    trained_steps,
+                    nll_loss
+                ))
+            )
+            torch.save(optim.state_dict(),
+                os.path.join(optim_dir, 'step_{:d}-NLL_{:.3f}-optim.pt'.format(
+                    trained_steps,
+                    nll_loss, 
+                ))
+            )
 
-    print ('[epoch {:03d}] training completed\n  -- loss = (RC: {:.4f})\n  -- time elapsed = {:.2f} secs.'.format(
-        epoch, recons_loss, time.time() - st
+    print ('[epoch {:03d}] training completed\n  -- loss = (NLL: {:.4f})\n  -- time elapsed = {:.2f} secs.'.format(
+        epoch, nll_loss, time.time() - st
     ))
-    log_data = {
-        'ep': epoch,
-        'steps': trained_steps,
-        'recons_loss': recons_loss,
-        'acc': acc,
-        'time': time.time() - st
-    }
-    log_epoch(
-        os.path.join(ckpt_dir, 'log.txt'), log_data, is_init=not os.path.exists(os.path.join(ckpt_dir, 'log.txt'))
-    )
 
-def validate(model, dloader, n_rounds=8):
+def validate(model, dloader):
     model.eval()
-    loss_rec = []
+    nll_loss = []
     acc_all = []
 
     print ('[info] validating ...')
     with torch.no_grad():
-        for i in range(n_rounds):
-            print ('[round {}]'.format(i+1))
+        for batch_idx, batch_samples in enumerate(dloader):
+            model.zero_grad()
 
-            for batch_idx, batch_samples in enumerate(dloader):
-                model.zero_grad()
+            batch_dec_inp = batch_samples['dec_input'].to(device)
+            batch_dec_tgt = batch_samples['dec_target'].to(device)
+            batch_dec_bar = batch_samples['dec_bar_pos'].to(device)
+            batch_dec_lens = batch_samples['length']
 
-                batch_dec_inp = batch_samples['dec_input'].to(device)
-                batch_dec_tgt = batch_samples['dec_target'].to(device)
-                batch_dec_bar = batch_samples['dec_bar_pos'].to(device)
-                batch_dec_lens = batch_samples['length']
+            dec_logits = model(batch_dec_inp, batch_dec_bar)
+            losses = model.compute_loss(dec_logits, batch_dec_tgt)
+            
+            # generation accuracy
+            pred = torch.argmax(dec_logits, dim=-1) == batch_dec_tgt
+            length = batch_dec_lens.numpy()
+            acc = np.sum([torch.sum(pred[i, :length[i]]).item() for i in range(len(length))]) / np.sum(length)
+            
+            if not (batch_idx + 1) % 10:
+                print ('batch #{}: NLL {}, acc {}'.format(batch_idx + 1, round(losses['nll_loss'].item(), 3), round(acc, 3)))
 
-                dec_logits = model(batch_dec_inp, batch_dec_bar)
-                losses = model.compute_loss(dec_logits, batch_dec_tgt)
-                
-                # reconstruction accuracy
-                pred = torch.argmax(dec_logits, dim=-1) == batch_dec_tgt
-                length = batch_dec_lens.numpy()
-                if config['data']['first_token_only']:
-                    acc = np.sum([torch.sum(pred[:length[i], i]).item() for i in range(len(length))]) / np.sum(length)
-                else:
-                    acc = np.sum([torch.sum(pred[i, :(length[i] * config['data']['num_quantizers'])]).item() for i in range(len(length))]) / \
-                        np.sum(length * config['data']['num_quantizers'])
-                
-                if not (batch_idx + 1) % 10:
-                    print ('batch #{}: RC {}, acc {}'.format(batch_idx + 1, round(losses['recons_loss'].item(), 3), round(acc, 3)))
-
-                loss_rec.append(losses['recons_loss'].item())
-                acc_all.append(acc)
+            nll_loss.append(losses['nll_loss'].item())
+            acc_all.append(acc)
     
-    return loss_rec, acc_all
+    return nll_loss, acc_all
 
 if __name__ == "__main__":
-    dset = RVQTokensDataset(
+    dset = RVQTokenDataset(
         data_dir=config['data']['data_dir'],
         pieces=pickle_load(config['data']['train_split']),
         model_max_bars=config['data']['max_bars'],
         num_tokens=config['data']['num_quantizers'],
         codebook_size=config['data']['codebook_size'],
-        balanced_time=config['data']['balanced_time'],
-        time2pieces=pickle_load(config['data']['time_path']),
         balanced_density=config['data']['balanced_density'],
-        density2pieces=pickle_load(config['data']['density_path']),
-        first_token_only=config['data']['first_token_only'],
-        first_token_first=config['data']['first_token_first']
+        density2pieces=pickle_load(config['data']['density_path'])
     )
-    dset_val = RVQTokensDataset(
+    dset_val = RVQTokenDataset(
         data_dir=config['data']['data_dir'],
         pieces=pickle_load(config['data']['val_split']),
         model_max_bars=config['data']['max_bars'],
         num_tokens=config['data']['num_quantizers'],
         codebook_size=config['data']['codebook_size'],
-        shuffle=False,
-        first_token_only=config['data']['first_token_only'],
-        first_token_first=config['data']['first_token_first']
+        shuffle=False
     )
     print ('[info]', '# training samples: {}, # validation samples: {}'.format(len(dset.pieces), len(dset_val)))
 
-    dloader = DataLoader(dset, batch_size=config['data']['batch_size'], shuffle=False, num_workers=8)
+    dloader = DataLoader(dset, batch_size=config['data']['batch_size'], shuffle=True, num_workers=8)
     dloader_val = DataLoader(dset_val, batch_size=config['data']['batch_size'], shuffle=False, num_workers=8)
 
-    model = GPT2TokensGenerator(
+    model = GPT2TokenGenerator(
         mconf['dec_n_layer'], mconf['dec_n_head'], mconf['dec_d_model'], mconf['dec_d_ff'],
         mconf['d_embed'], dset.vocab_size, config['data']['max_bars'], use_bar_emb=mconf['use_bar_emb']
     ).to(device)
@@ -252,10 +194,11 @@ if __name__ == "__main__":
     
     run = wandb.init(
         config=dict(**{"n_parameters": n_params}),
-        resume="allow", project='MMPGenerator', group='', name='', id='decoder-{}L-{}H-{}D-{}E-32_bars-all-density-timeLast-strict-noOverlap'.format(
-            mconf['dec_n_layer'], mconf['dec_n_head'], mconf['dec_d_model'], mconf['d_embed']))
+        resume="allow", project='MuseTok', group='', name='', id='generator-{}L-{}H-{}D-{}E-16_bars-n{}-s{}-d{}'.format(
+            mconf['dec_n_layer'], mconf['dec_n_head'], mconf['dec_d_model'], mconf['d_embed'], 
+            tconf['num_quantizers'], tconf['codebook_size'], tconf['d_latent']))
 
     for ep in range(config['training']['max_epochs']):
-        train_model(ep+1, model, dloader, dloader_val, optimizer, scheduler, val_rounds=config['training']['val_rounds'])
+        train_model(ep+1, model, dloader, dloader_val, optimizer, scheduler)
     
     wandb.finish()

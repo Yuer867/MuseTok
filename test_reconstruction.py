@@ -3,12 +3,12 @@ sys.path.append('./model')
 import yaml
 from tqdm import tqdm
 from copy import deepcopy
+random.seed(42)
 
 import torch
 import numpy as np
-from scipy.stats import entropy
 
-from dataloader import REMIFullSongTransformerDataset
+from dataloader import REMIEventDataset
 from model.musetok import TransformerResidualVQ
 from remi2midi import remi2midi
 from utils import pickle_load, numpy_to_tensor, tensor_to_numpy
@@ -73,10 +73,9 @@ def get_latent_embedding(model, piece_data):
 
     return piece_latents
 
-def generate_on_latent_ctrl_vanilla_truncate(
+def reconstruct_on_latent(
         model, latents, event2idx, idx2event, 
-        max_events=12800, max_input_len=1280, truncate_len=512,
-        time_signature=None
+        max_events=12800, time_signature=None
     ):
     latent_placeholder = torch.zeros(max_events, 1, latents.size(-1)).to(device)
     generated = [event2idx['Bar_None']]    
@@ -113,7 +112,6 @@ def generate_on_latent_ctrl_vanilla_truncate(
                 print('[info] position not increasing, failed cnt:', failed_cnt)
                 if failed_cnt >= 10:
                     print('[FATAL] model stuck, exiting ...')
-                    # return generated
                     break
                 continue
             else:
@@ -199,9 +197,9 @@ def compute_perplexity(model, latents, inp, target, idx2event):
 
 
 if __name__ == "__main__":
-    dset = REMIFullSongTransformerDataset(
+    dset = REMIEventDataset(
         data_dir=config['data']['data_dir'], 
-        vocab_path=config['data']['vocab_path'], 
+        vocab_file=config['data']['vocab_path'], 
         do_augment=False,
         model_enc_seqlen=config['data']['enc_seqlen'], 
         model_dec_seqlen=config['data']['dec_seqlen'], 
@@ -211,13 +209,13 @@ if __name__ == "__main__":
         shuffle=False, 
         appoint_st_bar=0
     )
-    random.seed(42)
     
     # randomly sample pieces from test set
     pieces = random.sample(range(len(dset)), n_pieces)
 
-    # randomly sample pieces from a specific category
-    pieces = pickle_load('data/data_splits_timeLast_strict/all/density2pieces_test.pkl')['performance']
+    # OR, randomly sample pieces from a specific category
+    # i.e. monophonic, contrapuntal, polyphonic
+    pieces = pickle_load('data/data_splits_events/all/density2pieces_test.pkl')['polyphonic']
     pieces = random.sample(pieces, n_pieces)
     pieces = [dset.piece2idx[os.path.join(config['data']['data_dir'], piece)] for piece in pieces]
     print('[sampled pieces]', pieces)
@@ -291,18 +289,14 @@ if __name__ == "__main__":
             print('[info] file exists, skipping ...')
             continue
 
-        song, t_sec, perplexity = generate_on_latent_ctrl_vanilla_truncate(
+        song, t_sec, perplexity = reconstruct_on_latent(
                                     model, p_latents, 
                                     dset.event2idx, dset.idx2event,
                                     max_events=12800,
-                                    max_input_len=config['generate']['max_input_dec_seqlen'], 
-                                    # max_input_len=2500,
-                                    truncate_len=min(512, config['generate']['max_input_dec_seqlen'] - 32), 
                                     time_signature=orig_song_time
                                 )
         times.append(t_sec)
         song = word2event(song, dset.idx2event)
-        
         print(*song, sep='\n', file=open(out_file + '.txt', 'a'))
         remi2midi(song, out_file + '.mid', enforce_tempo=True, enforce_tempo_val=[TempoEvent(DEFAULT_TEMPO, 0, 0, 4, 4)])
         

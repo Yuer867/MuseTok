@@ -1,9 +1,9 @@
-import os, pickle, random
-from glob import glob
+import os, random
 import numpy as np
+from glob import glob
 
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 
 from utils import pickle_load
 
@@ -60,7 +60,7 @@ def convert_event(event_seq, event2idx, to_ndarr=True):
     else:
         return event_seq
 
-class REMIFullSongTransformerDataset(Dataset):
+class REMIEventDataset(Dataset):
     def __init__(self, data_dir, vocab_file, 
                 model_enc_seqlen=128, model_dec_seqlen=1280, model_max_bars=16,
                 pieces=[], do_augment=True, augment_range=range(-6, 7), 
@@ -85,8 +85,7 @@ class REMIFullSongTransformerDataset(Dataset):
         self.pad_to_same = pad_to_same
         
         self.balanced_density = balanced_density
-        self.class_density = ['monophonic', 'polyphonic', 'performance']
-        # self.class_density = ['monophonic', 'polyphonic']
+        self.class_density = ['monophonic', 'contrapuntal', 'polyphonic']
         self.density2pieces = density2pieces
 
         self.appoint_st_bar = appoint_st_bar
@@ -121,7 +120,7 @@ class REMIFullSongTransformerDataset(Dataset):
 
         for i, p in enumerate(self.pieces):
             bar_pos, p_evs = pickle_load(p)
-            if not i % 1000:
+            if not i % 10000:
                 print ('[preparing data] now at #{}'.format(i))
             if bar_pos[-1] == len(p_evs):
                 print ('piece {}, got appended bar markers'.format(p))
@@ -239,7 +238,6 @@ class REMIFullSongTransformerDataset(Dataset):
 
         return {
             'id': idx,
-            # 'piece_id': int(os.path.basename(self.pieces[idx]).replace('.pkl', '')),
             'piece_path': self.pieces[idx],
             'piece_id': os.path.basename(self.pieces[idx]).replace('.pkl', ''),
             'st_bar_id': st_bar,
@@ -253,43 +251,30 @@ class REMIFullSongTransformerDataset(Dataset):
             'enc_n_bars': enc_n_bars,
         }
 
-class RVQTokensDataset(Dataset):
+class RVQTokenDataset(Dataset):
     def __init__(self, data_dir, pieces=[], model_max_bars=16, 
                     num_tokens=8, codebook_size=1024,
-                    balanced_time=False, time2pieces=None, 
                     balanced_density=False, density2pieces=None, 
-                    shuffle=True, appoint_st_bar=None,
-                    first_token_only=False, first_token_first=False):
+                    shuffle=True, appoint_st_bar=None):
         self.data_dir = data_dir
         self.pieces = pieces
         self.pieces = sorted([os.path.join(self.data_dir, p) for p in self.pieces])
         self.piece2idx = {self.pieces[idx]:idx for idx in range(len(self.pieces))}
-        
-        self.first_token_only = first_token_only
-        self.first_token_first = first_token_first
         
         self.model_max_bars = model_max_bars
         self.num_tokens = num_tokens
         self.codebook_size = codebook_size
         self.appoint_st_bar = appoint_st_bar
         
-        if first_token_only:
-            vocab = list(range(1 * codebook_size))
-        else:
-            vocab = list(range(num_tokens * codebook_size))
+        vocab = list(range(num_tokens * codebook_size))
         orig_vocab_size = len(vocab)
         self.bos_token = orig_vocab_size
         self.eos_token = orig_vocab_size + 1
         self.pad_token = orig_vocab_size + 2
         self.vocab_size = self.pad_token + 1
         
-        self.balanced_time = balanced_time
-        self.class_time_sig = ['4/4', '6/8', '2/4', '2/2', '3/4']
-        self.time2pieces = time2pieces
-        
         self.balanced_density = balanced_density
-        self.class_density = ['monophonic', 'polyphonic', 'performance']
-        # self.class_density = ['monophonic', 'polyphonic']
+        self.class_density = ['monophonic', 'contrapuntal', 'polyphonic']
         self.density2pieces = density2pieces
         
         self.shuffle = shuffle
@@ -297,14 +282,7 @@ class RVQTokensDataset(Dataset):
     
     def generate_queue(self):
         self.queue = []      
-        if self.balanced_time:
-            print('[preparing data] balanced time signature')
-            while len(self.queue) < len(self.pieces):
-                class_set = self.class_time_sig[:]
-                random.shuffle(class_set)
-                self.queue += [self.piece2idx[os.path.join(self.data_dir, self.time2pieces[d][random.randint(0, len(self.time2pieces[d]) - 1)])] for d in class_set]
-            self.queue = self.queue[:len(self.pieces)]
-        elif self.balanced_density:
+        if self.balanced_density:
             print('[preparing data] balanced note density')
             print('[preparing data] class: ', self.class_density)
             while len(self.queue) < len(self.pieces):
@@ -362,18 +340,13 @@ class RVQTokensDataset(Dataset):
             idx = idx.tolist()
 
         tokens, st_bar, n_bars = self.get_sample_from_file(idx)
-        if self.first_token_only:
-            tokens = np.array(tokens).reshape(-1, self.num_tokens)[:, 0].tolist()
-            bar_pos = np.concatenate(([self.model_max_bars], np.arange(self.model_max_bars)))
-        elif self.first_token_first:
-            tokens = np.array(tokens).reshape(-1, self.num_tokens).T.reshape(-1).tolist()
-            bar_pos = np.concatenate(([self.model_max_bars], np.tile(np.arange(self.model_max_bars), self.num_tokens)))
-        else:
-            bar_pos = np.concatenate(([self.model_max_bars], np.repeat(np.arange(self.model_max_bars), self.num_tokens)))
-            
+        bar_pos = np.concatenate(([self.model_max_bars], np.repeat(np.arange(self.model_max_bars), self.num_tokens)))
+        length = n_bars * self.num_tokens + 1
+        
         tokens = [self.bos_token] + tokens
         inp = np.array(tokens[:-1], dtype=int)
         target = np.array(tokens[1:], dtype=int)
+        bar_pos = np.array(bar_pos, dtype=int)
         assert len(inp) == len(target)
         assert len(inp) == len(bar_pos)
 
@@ -384,5 +357,5 @@ class RVQTokensDataset(Dataset):
             'dec_input': inp,
             'dec_target': target,
             'dec_bar_pos': bar_pos,
-            'length': n_bars
+            'length': length
         }

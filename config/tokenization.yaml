@@ -1,10 +1,10 @@
 data:
     data_dir:         data
-    train_split:      data/data_splits_timeLast_repeatBeat_noVelocity_strict_noOverlap/all/all_train.pkl
-    val_split:        data/data_splits_timeLast_repeatBeat_noVelocity_strict_noOverlap/all/small_valid.pkl
-    test_split:       data/data_splits_timeLast_repeatBeat_noVelocity_strict_noOverlap/all/all_test.pkl
-    vocab_path:       data/dictionary_strict_noVelocity.pkl
-    density_path:     data/data_splits_timeLast_repeatBeat_noVelocity_strict_noOverlap/all/density2pieces_train.pkl
+    train_split:      data/data_splits_events/all/all_train.pkl
+    val_split:        data/data_splits_events/all/small_valid.pkl
+    test_split:       data/data_splits_events/all/all_test.pkl
+    vocab_path:       data/dictionary.pkl
+    density_path:     data/data_splits_events/all/density2pieces_train.pkl
     max_bars:         16
     enc_seqlen:       128
     dec_seqlen:       1280
@@ -28,10 +28,10 @@ model:
     pretrained_params_path:  null
     pretrained_optim_path:   null
     rotation_trick:   True
-    rvq_type:         SimVQ # FSQ, RVQ
+    rvq_type:         SimVQ     # FSQ, RVQ
 
 training:
-    device:           cuda:0
+    device:           cuda:1
     ckpt_dir:         null
     trained_steps:    0
     max_epochs:       1000
@@ -42,6 +42,3 @@ training:
     ckpt_interval:    1000
     val_interval:     50
     beta:             1
-
-generate:
-    max_input_dec_seqlen:       1024

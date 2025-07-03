@@ -1,48 +1,41 @@
 data:
-    data_dir:         data_tokens
-    train_split:      data/data_splits_timeLast_strict/all/all_train.pkl
-    val_split:        data/data_splits_timeLast_strict/all/all_valid.pkl
-    test_split:       data/data_splits_timeLast_strict/all/all_test.pkl
-    time_path:        ../data_events/data_pdmx_rvq_piano_density_s512/timeSig2pieces_piano.pkl
-    density_path:     data/data_splits_timeLast_strict/all/density2pieces_train.pkl
-    max_bars:         32
-    num_quantizers:   8     # vae
-    codebook_size:    1024  # vae
-    batch_size:       128
-    balanced_time:    False
+    data_dir:         data
+    train_split:      data/data_splits_tokens/all_train.pkl
+    val_split:        data/data_splits_tokens/small_valid.pkl
+    test_split:       data/data_splits_tokens/all_test.pkl
+    density_path:     data/data_splits_tokens/density2pieces_train.pkl
+    max_bars:         16
+    num_quantizers:   16     # vae
+    codebook_size:    2048   # vae
+    batch_size:       64
     balanced_density: True
-    first_token_only: False
-    first_token_first: False
 
 model:
     dec_n_layer:      12
-    dec_n_head:       8
-    dec_d_model:      512
+    dec_n_head:       16
+    dec_d_model:      1024
     dec_d_ff:         2048
-    d_embed:          128
+    d_embed:          512
     use_bar_emb:      True
     pretrained_params_path:  null
     pretrained_optim_path:   null
 
 training:
     device:           cuda:1
-    ckpt_dir:         ./ckpt/enc_dec_12L-16_bars-seqlen_1280-rvq-pdmx-n4-s1024
+    ckpt_dir:         null
     trained_steps:    0
     max_epochs:       1000
     max_lr:           1.0e-4
     min_lr:           5.0e-6
-    lr_warmup_steps:  100  # 200
-    lr_decay_steps:   15000  # 150000
-    free_bit_lambda:  0.25
+    lr_warmup_steps:  200
+    lr_decay_steps:   150000
     ckpt_interval:    5000
-    log_interval:     10
     val_interval:     50
-    val_rounds:       1
 
 data_music:
     data_dir:         data
-    test_split:       data/data_splits_timeLast_strict/all/all_test.pkl
-    vocab_path:       data/dictionary_strict.pkl
+    test_split:       data/data_splits_events/all/all_test.pkl
+    vocab_path:       data/dictionary.pkl
     max_bars:         16
     enc_seqlen:       128
     dec_seqlen:       1280
@@ -58,28 +51,17 @@ tokenizer:
     dec_d_ff:         2048
     d_embed:          512
     d_latent:         128   # vae
-    num_quantizers:   8     # vae
-    codebook_size:    1024  # vae
-    pretrained_tokenizer_path:  ckpt/enc_dec_12L-16_bars-seqlen_1280-rvq-all-n8-s1024-d128-beta1-types-strict-new/params/step_16000-RC_0.605-CM_0.040-model.pt
+    num_quantizers:   16    # vae
+    codebook_size:    2048  # vae
+    pretrained_tokenizer_path:  ckpt/best_tokenizer/model.pt
     rotation_trick:   True
     rvq_type:         SimVQ # FSQ
 
-decoder:
-    dec_n_layer:      12
-    dec_n_head:       16
-    dec_d_model:      1024
-    dec_d_ff:         2048
-    d_embed:          1024
-    d_latent:         128   # vae
-    pretrained_decoder_path:  ckpt/enc_dec_12L-16_bars-seqlen_1280-rvq-all-n8-s1024-d128-beta1-types-strict-new/params/step_16000-RC_0.605-CM_0.040-model.pt
-
 generate:
     temperature:                1.1
-    nucleus_p:                  0.8
-    use_latent_sampling:        False
-    latent_sampling_var:        0.0
-    max_bars:                   32       # could be set to match the longest input piece during generation (inference)
-    num_quantizers:             8        # vae
-    codebook_size:              1024  # vae
-    dec_seqlen:                 1280     # could be set to match the longest input piece during generation (inference)
-    max_input_dec_seqlen:       1024     # should be set to equal to or less than `dec_seqlen` used during training
+    nucleus_p:                  0.9
+    top_k:                      30
+    max_bars:                   16     
+    num_quantizers:             16       # vae
+    codebook_size:              2048     # vae
+    dec_seqlen:                 1280     

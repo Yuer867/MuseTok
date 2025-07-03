@@ -1,6 +1,5 @@
 import os
 import pickle
-import argparse
 import numpy as np
 from tqdm import tqdm
 
@@ -98,10 +97,6 @@ def events2dictionary(event_path, dictionary_path, add_velocity=False):
 
 
 if __name__ == '__main__':
-    dictionary_path = '/deepfreeze/jingyue/data/dictionary_strict_noVelocity.pkl'
-    events_path = '/deepfreeze/jingyue/data/Hymnal-Folk/data_events_timeLast_repeatBeat_noVelocity_strict_noOverlap'
+    dictionary_path = 'data/dictionary.pkl'
+    events_path = 'data/Hymnal-Folk/data_events'
     events2dictionary(events_path, dictionary_path, add_velocity=False)
-    
-    # vocab = build_full_vocab(add_velocity=True)
-    # print(sorted(set(vocab), key=lambda x: (not isinstance(x, int), x)))
-    # print(len(set(vocab)))

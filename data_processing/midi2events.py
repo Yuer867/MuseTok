@@ -23,10 +23,7 @@ NOTE_SORTING = 1  # 0: ascending / 1: descending
 DEFAULT_TEMPO = 110
 DEFAULT_VELOCITY_BINS = np.linspace(4, 127, 42, dtype=int)
 DEFAULT_BPM_BINS = np.linspace(32, 224, 64 + 1, dtype=int)
-# DEFAULT_SHIFT_BINS = np.linspace(-60, 60, 60 + 1, dtype=int)
 DEFAULT_SHIFT_BINS = np.linspace(-TICK_RESOL, TICK_RESOL, TICK_RESOL + 1, dtype=int)
-# DEFAULT_DURATION_BINS = np.arange(BEAT_RESOL / 8, BEAT_RESOL * 8 + 1, BEAT_RESOL / 8)
-# DEFAULT_DURATION_BINS = np.arange(BEAT_RESOL / 12, BEAT_RESOL * 8 + 1, BEAT_RESOL / 12)
 
 
 class NoteEvent(object):
@@ -93,16 +90,12 @@ def check_triplet(start, quantized_timing, bar_resol):
 
 
 def analyzer(midi_path):
-    """
-    get melody and chord(marker) tracks for lead sheet
-    """
     # load midi obj
     midi_obj = miditoolkit.midi.parser.MidiFile(midi_path)
     assert midi_obj.ticks_per_beat == 480, f"{midi_obj.ticks_per_beat}"
     notes = []
     for instrument in midi_obj.instruments:
         notes += instrument.notes
-    max_tick = midi_obj.max_tick
     notes = sorted(notes, key=lambda x: (x.start, x.pitch))
     # assert len(midi_obj.time_signature_changes) == 1, midi_obj.time_signature_changes
     time_sig = midi_obj.time_signature_changes[0]
@@ -540,6 +533,7 @@ def midi2events(file):
     try:
         filename = os.path.basename(file).split('.')[0]
         output_path = os.path.join(events_dir, filename + '.pkl')
+        os.makedirs(events_dir, exist_ok=True)
         
         midi_obj, bar_resol = analyzer(file)
         # full_data = midi2corpus(midi_obj, bar_resol)
@@ -591,8 +585,7 @@ if __name__ == '__main__':
     """
     convert midi to events
     """
-    # events_path = 'data_events_timeLast_repeatBeat_noVelocity'
-    events_path = 'data_events_timeLast_repeatBeat_noVelocity_strict_noOverlap'
+    events_path = 'data_events'
     time_first = False
     has_velocity = False
     repeat_beat = True
@@ -602,48 +595,43 @@ if __name__ == '__main__':
     
     # EMOPIA
     # midi_dir = '/deepfreeze/jingyue/data/EMOPIA/midi_quantized_480'
-    # events_dir = '/deepfreeze/jingyue/data/EMOPIA/{}'.format(events_path)
+    # events_dir = 'data/EMOPIA/{}'.format(events_path)
     # midi_files = glob(os.path.join(midi_dir, '*.mid'), recursive=True)
     # TICK_RESOL = BEAT_RESOL // 12
     
     # Pop1k7
     # midi_dir = '/deepfreeze/jingyue/data/Pop1k7/midi_quantized_480'
-    # events_dir = '/deepfreeze/jingyue/data/Pop1k7/{}'.format(events_path)
+    # events_dir = 'data/Pop1k7/{}'.format(events_path)
     # midi_files = glob(os.path.join(midi_dir, '*.mid'), recursive=True)
     # TICK_RESOL = BEAT_RESOL // 12
 
     # POP909
     # midi_dir = '/deepfreeze/jingyue/data/POP909/midi_quantized_480'
-    # events_dir = '/deepfreeze/jingyue/data/POP909/{}'.format(events_path)
+    # events_dir = 'data/POP909/{}'.format(events_path)
     # midi_files = glob(os.path.join(midi_dir, '*.mid'), recursive=True)
     # TICK_RESOL = BEAT_RESOL // 12
     
-    # Pianist8
-    # midi_dir = '/deepfreeze/jingyue/data/Pianist8/midi_quantized_480'
-    # events_dir = '/deepfreeze/jingyue/data/Pianist8/{}'.format(events_path)
-    # midi_files = glob(os.path.join(midi_dir, '*.mid'), recursive=True)
-    
     # Multipianomide-Classic
     # midi_dir = '/deepfreeze/jingyue/data/Multipianomide-Classic/midi_quantized_480_split'
-    # events_dir = '/deepfreeze/jingyue/data/Multipianomide-Classic/{}'.format(events_path)
+    # events_dir = 'data/Multipianomide-Classic/{}'.format(events_path)
     # midi_files = glob(os.path.join(midi_dir, '*.mid'), recursive=True)
     # TICK_RESOL = BEAT_RESOL // 12
     
     # Hymnal-Folk
     # midi_dir = '/deepfreeze/jingyue/data/Hymnal-Folk/midi_quantized_480_split'
-    # events_dir = '/deepfreeze/jingyue/data/Hymnal-Folk/{}'.format(events_path)
+    # events_dir = 'data/Hymnal-Folk/{}'.format(events_path)
     # midi_files = glob(os.path.join(midi_dir, '*.mid'), recursive=True)
     # TICK_RESOL = BEAT_RESOL // 12
     
     # Ragtime-perfect-Jazz
     # midi_dir = '/deepfreeze/jingyue/data/Ragtime-perfect-Jazz/midi_quantized_480_split'
-    # events_dir = '/deepfreeze/jingyue/data/Ragtime-perfect-Jazz/{}'.format(events_path)
+    # events_dir = 'data/Ragtime-perfect-Jazz/{}'.format(events_path)
     # midi_files = glob(os.path.join(midi_dir, '*.mid'), recursive=True)
     # TICK_RESOL = BEAT_RESOL // 12
     
     # PDMX
     midi_dir = '/deepfreeze/jingyue/data/PDMX/data_midi_piano_split'
-    events_dir = '/deepfreeze/jingyue/data/PDMX/{}'.format(events_path)
+    events_dir = 'data/PDMX/{}'.format(events_path)
     midi_files = glob(os.path.join(midi_dir, '*/*/*.mid'), recursive=True)
     
     os.makedirs(events_dir, exist_ok=True)

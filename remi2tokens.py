@@ -1,18 +1,16 @@
+import sys, os
+sys.path.append('./model')
 import yaml
 import math
 import numpy as np
 from tqdm import tqdm
 from glob import glob
-import sys, os, random, time
-sys.path.append('./model')
-import matplotlib.pyplot as plt
-from collections import defaultdict, Counter
 
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 
-from utils import pickle_load, pickle_dump, numpy_to_tensor, tensor_to_numpy
 from model.musetok import TransformerResidualVQ
+from utils import pickle_load, pickle_dump, numpy_to_tensor, tensor_to_numpy
 
 config_path = sys.argv[1]
 config = yaml.load(open(config_path, 'r'), Loader=yaml.FullLoader)
@@ -53,9 +51,8 @@ def transpose_events(raw_events, n_keys):
     return transposed_raw_events
 
 class REMIWholeSequenceDataset(Dataset):
-    def __init__(self, data_dir, vocab_file, 
+    def __init__(self, data_dir, vocab_file, pieces=[], 
                 model_enc_seqlen=128, model_max_bars=16,
-                pieces=[], appoint_st_bar=None, 
                 do_augment=False, augment_range=range(-6, 7), 
                 min_pitch=21, max_pitch=108):
         self.vocab_file = vocab_file
@@ -67,13 +64,11 @@ class REMIWholeSequenceDataset(Dataset):
 
         self.model_enc_seqlen = model_enc_seqlen
         self.model_max_bars = model_max_bars
-        self.appoint_st_bar = appoint_st_bar
         
         # augment music sequences by pitch shifting
         self.do_augment = do_augment
         self.augment_range = augment_range
         self.min_pitch, self.max_pitch = min_pitch, max_pitch
-        
 
     def read_vocab(self):
         vocab = pickle_load(self.vocab_file)[0]
@@ -81,9 +76,6 @@ class REMIWholeSequenceDataset(Dataset):
         orig_vocab_size = len(vocab)
         self.event2idx = vocab
         self.bar_token = self.event2idx['Bar_None']
-        # self.eos_token = self.event2idx['<eos>']
-        # self.pad_token = self.event2idx['<pad>']
-        # self.vocab_size = len(vocab)
         self.eos_token = self.event2idx['EOS_None']
         self.pad_token = orig_vocab_size
         self.vocab_size = self.pad_token + 1
@@ -99,7 +91,7 @@ class REMIWholeSequenceDataset(Dataset):
 
         for i, p in enumerate(self.pieces):
             bar_pos, p_evs = pickle_load(p)
-            if not i % 1000:
+            if not i % 10000:
                 print ('[preparing data] now at #{}'.format(i))
             if bar_pos[-1] == len(p_evs):
                 print ('piece {}, got appended bar markers'.format(p))
@@ -117,8 +109,7 @@ class REMIWholeSequenceDataset(Dataset):
             picked_bar_pos = np.array(piece_bar_pos[ picked_st_bar : picked_st_bar + self.model_max_bars ]) - piece_bar_pos[picked_st_bar]
         else:
             picked_evs = piece_evs[piece_bar_pos[picked_st_bar]:]
-            picked_bar_pos = np.array(piece_bar_pos[picked_st_bar:] + 
-                                        [piece_bar_pos[-1]] * 
+            picked_bar_pos = np.array(piece_bar_pos[picked_st_bar:] + [piece_bar_pos[-1]] * 
                                         (self.model_max_bars - len(piece_bar_pos) + picked_st_bar)
                                         ) - piece_bar_pos[picked_st_bar]
         assert len(picked_bar_pos) == self.model_max_bars
@@ -187,12 +178,9 @@ class REMIWholeSequenceDataset(Dataset):
         n_segment = math.ceil((len(piece_bar_pos)-1) / self.model_max_bars)
         piece_enc_inp = np.zeros((len(piece_augment_range), n_segment, self.model_max_bars, self.model_enc_seqlen))
         piece_enc_padding_mask = np.zeros((len(piece_augment_range), n_segment, self.model_max_bars, self.model_enc_seqlen))
-        # seg_pos = []
         
         for i in range(n_segment):
             st_bar = i * self.model_max_bars
-            # seg_pos.append(st_bar)
-            
             bar_events, bar_pos = self.get_sample_from_file(piece_evs, piece_bar_pos, st_bar)
             bar_pos = bar_pos.tolist() + [len(bar_events)]
             
@@ -204,24 +192,24 @@ class REMIWholeSequenceDataset(Dataset):
                 
                 piece_enc_inp[j][i] = enc_inp
                 piece_enc_padding_mask[j][i] = enc_padding_mask
-                
-        # seg_pos.append(len(piece_bar_pos)-1)
         
         if 'PDMX' in self.pieces[idx]:
             piece_id = '/'.join(self.pieces[idx].split('/')[-3:])[:-4]
+            dataset = 'PDMX'
         else:
             piece_id = os.path.basename(self.pieces[idx])[:-4]
+            dataset = self.pieces[idx].split('/')[-3]
+            assert dataset in ['EMOPIA', 'POP909', 'Pop1k7', 'Multipianomide-Classic', 'Hymnal-Folk', 'Ragtime-perfect-Jazz']
         
         return {
             'id': idx,
             'piece_id': piece_id,
-            'dataset': self.pieces[idx].split('/')[1],
+            'dataset': dataset,
             'n_bar': len(piece_bar_pos)-1,
             'n_segment': n_segment,
             'n_augment': len(piece_augment_range),
             'enc_inp': piece_enc_inp,
-            'enc_padding_mask': piece_enc_padding_mask,
-            # 'seg_pos': seg_pos
+            'enc_padding_mask': piece_enc_padding_mask
         }
 
 
@@ -250,65 +238,132 @@ def dump_token_sequence(dset, model, data_dir, device, dump_latents=False,
         enc_padding_mask = p_data['enc_padding_mask']
         max_bar, seq_len = enc_inp.shape[2], enc_inp.shape[3]
         
-        enc_inp = numpy_to_tensor(enc_inp.reshape(-1, max_bar, seq_len), device=device).permute(2, 0, 1).long()
-        enc_padding_mask = numpy_to_tensor(enc_padding_mask.reshape(-1, max_bar, seq_len), device=device).bool()
-        with torch.no_grad():
-            latents, indices = model.get_batch_latent(enc_inp, enc_padding_mask, latent_from_encoder=False)
-
-        indices = tensor_to_numpy(indices).reshape(n_augment, n_segment * max_bar, -1)[:, :n_bar, :]
-        indices += np.arange(num_quantizers) * codebook_size
-        indices = indices.reshape(n_augment, -1).astype(int).tolist()
-        
-        assert len(indices) == n_augment
-        assert len(indices[0]) == n_bar * num_quantizers
-        
-        latents = tensor_to_numpy(latents).reshape(n_augment, n_segment * max_bar, -1)[:, :n_bar, :]
-        assert n_bar == latents[0].shape[0]
-        
         if do_augment:
+            p_indices = np.zeros((n_augment, n_segment * max_bar, num_quantizers))
+            
+            k = 4
+            for s in range(int(np.ceil(n_segment / k))):
+                enc_inp_ = enc_inp[:, s*k:(s+1)*k, :, :]
+                n_segment_ = enc_inp_.shape[1]
+                enc_padding_mask_ = enc_padding_mask[:, s*k:(s+1)*k, :, :]
+                enc_inp_ = numpy_to_tensor(enc_inp_.reshape(-1, max_bar, seq_len), device=device).permute(2, 0, 1).long()
+                enc_padding_mask_ = numpy_to_tensor(enc_padding_mask_.reshape(-1, max_bar, seq_len), device=device).bool()
+                
+                with torch.no_grad():
+                    _, indices = model.get_batch_latent(enc_inp_, enc_padding_mask_, latent_from_encoder=False)
+                
+                indices = tensor_to_numpy(indices).reshape(n_augment, n_segment_ * max_bar, -1)
+                p_indices[:, s*k * max_bar :(s*k+n_segment_) * max_bar, :] = indices
+                
+            p_indices = p_indices[:, :n_bar, :]
+            p_indices += np.arange(num_quantizers) * codebook_size
+            p_indices = p_indices.reshape(n_augment, -1).astype(int).tolist()
+            assert len(p_indices) == n_augment
+            assert len(p_indices[0]) == n_bar * num_quantizers
+            
             for i in range(n_augment):
-                data_path = os.path.join(data_dir, p_data['piece_id'] + '_{}.pkl'.format(i))
-                dump_pieces.append(p_data['piece_id'] + '_{}.pkl'.format(i))
+                data_path = os.path.join(data_dir, p_data['dataset'], 
+                                        'data_tokens', p_data['piece_id'] + '_{}.pkl'.format(i))
+                dump_pieces.append(os.path.join(p_data['dataset'], 
+                                        'data_tokens', p_data['piece_id'] + '_{}.pkl'.format(i)))
                 os.makedirs('/'.join(data_path.split('/')[:-1]), exist_ok=True)
-                pickle_dump(indices[i], data_path)
+                pickle_dump(p_indices[i], data_path)
+        
         else:
-            assert len(indices) == 1
-            assert len(indices[0]) % 8 == 0
-            # data_path = os.path.join(data_dir, p_data['dataset'], 'data_events_timeLast_strict_noOverlap', p_data['piece_id'] + '.pkl')
-            data_path = os.path.join(data_dir, p_data['piece_id'] + '.pkl')
+            enc_inp = numpy_to_tensor(enc_inp.reshape(-1, max_bar, seq_len), device=device).permute(2, 0, 1).long()
+            enc_padding_mask = numpy_to_tensor(enc_padding_mask.reshape(-1, max_bar, seq_len), device=device).bool()
+            
+            with torch.no_grad():
+                latents, indices = model.get_batch_latent(enc_inp, enc_padding_mask, latent_from_encoder=False)
+
+            indices = tensor_to_numpy(indices).reshape(n_augment, n_segment * max_bar, -1)[:, :n_bar, :]
+            indices += np.arange(num_quantizers) * codebook_size
+            indices = indices.reshape(n_augment, -1).astype(int).tolist()
+            latents = tensor_to_numpy(latents).reshape(n_augment, n_segment * max_bar, -1)[:, :n_bar, :]
+            assert len(indices) == n_augment
+            assert len(indices[0]) == n_bar * num_quantizers
+            assert n_bar == latents[0].shape[0]
+            
+            data_path = os.path.join(data_dir, p_data['dataset'], 'data_tokens', p_data['piece_id'] + '.pkl')
+            dump_pieces.append(os.path.join(p_data['dataset'], 'data_tokens', p_data['piece_id'] + '.pkl'))
             os.makedirs('/'.join(data_path.split('/')[:-1]), exist_ok=True)
-            dump_pieces.append(data_path)
 
             if dump_latents:
                 pickle_dump(latents[0], data_path)
             else:
                 pickle_dump(indices[0], data_path)
-            
-        # del indices, enc_inp, enc_padding_mask
-    
+
     return dump_pieces
     
     
+def dump_density(files, split):
+    density2pieces = pickle_load('data/data_splits_events/all/density2pieces_{}.pkl'.format(split))
+    piece2density = {}
+    for i in density2pieces['monophonic']:
+        piece2density[os.path.basename(i)[:-4]] = 'monophonic'
+    for i in density2pieces['contrapuntal']:
+        piece2density[os.path.basename(i)[:-4]] = 'contrapuntal'
+    for i in density2pieces['polyphonic']:
+        piece2density[os.path.basename(i)[:-4]] = 'polyphonic'
+    
+    density2pieces_new = {'monophonic':[], 'contrapuntal':[], 'polyphonic':[]}
+    for file in files:
+        if split in ['train']:
+            filename = '_'.join(os.path.basename(file)[:-4].split('_')[:-1])
+        elif split in ['valid', 'test']:
+            filename = os.path.basename(file)[:-4]
+        if filename in piece2density:
+            density2pieces_new[piece2density[filename]].append(file)
+        else:
+            print(filename)
+    
+    assert len(files) == len(density2pieces_new['monophonic']) + \
+                        len(density2pieces_new['contrapuntal']) + \
+                        len(density2pieces_new['polyphonic'])
+    pickle_dump(density2pieces_new, 'data/data_splits_tokens/density2pieces_{}.pkl'.format(split))
+
+
+def dump_small_set():
+    small_set = pickle_load('data/data_splits_events/all/small_valid.pkl')
+    new_small_set = []
+    for file in small_set:
+        new_small_set.append(file.replace('events', 'tokens'))
+    pickle_dump(new_small_set, 'data/data_splits_tokens/small_valid.pkl')
+
 
 if __name__ == "__main__":
     # dataset
     train_pieces = pickle_load(config['data']['train_split'])
     valid_pieces = pickle_load(config['data']['val_split'])
     test_pieces = pickle_load(config['data']['test_split'])
-    
-    dset = REMIWholeSequenceDataset(
-        config['data']['data_dir'], 
-        config['data']['vocab_path'], 
-        model_enc_seqlen=config['data']['enc_seqlen'], 
-        model_max_bars=config['data']['max_bars'],
-        pieces=train_pieces + valid_pieces + test_pieces,
-        do_augment=False
-    )
-    
     print ('[info]', '# training samples: {}'.format(len(train_pieces)))
     print('[info]', '# validation samples: {}'.format(len(valid_pieces)))
     print('[info]', '# test samples: {}'.format(len(test_pieces)))
-    assert len(dset.pieces) == len(train_pieces) + len(valid_pieces) + len(test_pieces)
+    
+    train_dset = REMIWholeSequenceDataset(
+        data_dir=config['data']['data_dir'], 
+        vocab_file=config['data']['vocab_path'], 
+        pieces=train_pieces,
+        model_enc_seqlen=config['data']['enc_seqlen'], 
+        model_max_bars=config['data']['max_bars'],
+        do_augment=True
+    )
+    val_dset = REMIWholeSequenceDataset(
+        data_dir=config['data']['data_dir'], 
+        vocab_file=config['data']['vocab_path'], 
+        pieces=valid_pieces,
+        model_enc_seqlen=config['data']['enc_seqlen'], 
+        model_max_bars=config['data']['max_bars'],
+        do_augment=False
+    )
+    test_dset = REMIWholeSequenceDataset(
+        data_dir=config['data']['data_dir'], 
+        vocab_file=config['data']['vocab_path'], 
+        pieces=test_pieces,
+        model_enc_seqlen=config['data']['enc_seqlen'], 
+        model_max_bars=config['data']['max_bars'],
+        do_augment=False
+    )
     
     # tokenizer
     device = config['training']['device']
@@ -316,10 +371,9 @@ if __name__ == "__main__":
     model = TransformerResidualVQ(
         mconf['enc_n_layer'], mconf['enc_n_head'], mconf['enc_d_model'], mconf['enc_d_ff'],
         mconf['dec_n_layer'], mconf['dec_n_head'], mconf['dec_d_model'], mconf['dec_d_ff'],
-        mconf['d_latent'], mconf['d_embed'], dset.vocab_size,
+        mconf['d_latent'], mconf['d_embed'], train_dset.vocab_size,
         mconf['num_quantizers'], mconf['codebook_size'],
-        rotation_trick=mconf['rotation_trick'],
-        rvq_type=mconf['rvq_type']
+        rotation_trick=mconf['rotation_trick'], rvq_type=mconf['rvq_type']
     ).to(device)
     model.eval()
     model.load_state_dict(torch.load(ckpt_path, map_location='cpu'))
@@ -327,22 +381,43 @@ if __name__ == "__main__":
 
     num_quantizers = mconf['num_quantizers']
     codebook_size = mconf['codebook_size']
-    data_dir = 'data_tokens'
-    # data_dir = '/deepfreeze/jingyue/data/Pianist8/Pianist8_style_classification/data_encoder_latents'
-    data_dir = '/deepfreeze/jingyue/data/EMOPIA/EMOPIA_emotion_recognition/data_rvq_tokens_strict'
-    os.makedirs(data_dir, exist_ok=True)
+    data_dir = 'data'
+    os.makedirs(os.path.join(data_dir, 'data_splits_tokens'), exist_ok=True)
     
-    print('dump learned tokens of training set to {}'.format(data_dir))
-    train_pieces = dump_token_sequence(dset, model, data_dir, device, 
-                                        dump_latents=True,
-                                        do_augment=False, 
+    # training data
+    print('[info] dump learned tokens of training set to {}'.format(data_dir))
+    print('[info] augmentation = {}'.format(train_dset.do_augment))
+    train_pieces = dump_token_sequence(train_dset, model, data_dir, device, 
+                                        dump_latents=False,
+                                        do_augment=True,
                                         num_quantizers=num_quantizers, 
                                         codebook_size=codebook_size)
     print('num of training samples:', len(train_pieces))
-    # pickle_dump(train_pieces, os.path.join(data_dir, 'splits_piano/train_split.pkl'))
+    pickle_dump(train_pieces, os.path.join(data_dir, 'data_splits_tokens/all_train.pkl'))
+    dump_density(train_pieces, split='train')
     
-    # print('dump learned tokens of validation set to {}'.format(data_dir))
-    # valid_pieces = dump_token_sequence(dset_val, model, data_dir, device, do_augment=False,
-    #                                 num_quantizers=num_quantizers, codebook_size=codebook_size)
-    # # pickle_dump(train_pieces, os.path.join(data_dir, 'splits_piano/val_split.pkl'))
-    # print('num of valid samples:', len(train_pieces))
+    # validation data
+    print('dump learned tokens of validation set to {}'.format(data_dir))
+    print('[info] augmentation = {}'.format(val_dset.do_augment))
+    val_pieces = dump_token_sequence(val_dset, model, data_dir, device, 
+                                        dump_latents=False,
+                                        do_augment=False,
+                                        num_quantizers=num_quantizers, 
+                                        codebook_size=codebook_size)
+    print('num of validation samples:', len(val_pieces))
+    pickle_dump(val_pieces, os.path.join(data_dir, 'data_splits_tokens/all_valid.pkl'))
+    dump_density(val_pieces, split='valid')
+    dump_small_set()
+    
+    # test data
+    print('dump learned tokens of test set to {}'.format(data_dir))
+    print('[info] augmentation = {}'.format(test_dset.do_augment))
+    test_pieces = dump_token_sequence(test_dset, model, data_dir, device, 
+                                        dump_latents=False,
+                                        do_augment=False,
+                                        num_quantizers=num_quantizers, 
+                                        codebook_size=codebook_size)
+    print('num of test samples:', len(test_pieces))
+    pickle_dump(test_pieces, os.path.join(data_dir, 'data_splits_tokens/all_test.pkl'))
+    dump_density(test_pieces, split='test')
+    

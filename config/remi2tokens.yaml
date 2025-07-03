@@ -1,9 +1,9 @@
 data:
     data_dir:         data
-    train_split:      data/data_splits_timeLast_strict/EMOPIA/train.pkl
-    val_split:        data/data_splits_timeLast_strict/EMOPIA/valid.pkl
-    test_split:       data/data_splits_timeLast_strict/EMOPIA/test.pkl
-    vocab_path:       data/dictionary_strict.pkl
+    train_split:      data/data_splits_events/all/all_train.pkl
+    val_split:        data/data_splits_events/all/all_valid.pkl
+    test_split:       data/data_splits_events/all/all_test.pkl
+    vocab_path:       data/dictionary.pkl
     max_bars:         16
     enc_seqlen:       128
 
@@ -18,12 +18,12 @@ model:
     dec_d_ff:         2048
     d_embed:          512
     d_latent:         128   # vae
-    num_quantizers:   8     # vae
-    codebook_size:    1024  # vae
+    num_quantizers:   16    # vae
+    codebook_size:    2048  # vae
     pretrained_params_path:  null
     pretrained_optim_path:   null
     rotation_trick:   True
     rvq_type:         SimVQ # FSQ
 
 training:
-    device:           cuda:0
+    device:           cuda:1

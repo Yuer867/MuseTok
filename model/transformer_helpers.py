@@ -1,8 +1,6 @@
 import math
 import torch
-
 from torch import nn
-import torch.nn.functional as F
 
 def generate_causal_mask(seq_len):
     mask = (torch.triu(torch.ones(seq_len, seq_len)) == 1).transpose(0, 1)
@@ -11,14 +9,14 @@ def generate_causal_mask(seq_len):
     return mask
 
 def weight_init_normal(weight, normal_std):
-  nn.init.normal_(weight, 0.0, normal_std)
+    nn.init.normal_(weight, 0.0, normal_std)
 
 def weight_init_orthogonal(weight, gain):
-  nn.init.orthogonal_(weight, gain)
+    nn.init.orthogonal_(weight, gain)
 
 def bias_init(bias):
-  nn.init.constant_(bias, 0.0)
-  
+    nn.init.constant_(bias, 0.0)
+
 def weights_init(m):
     classname = m.__class__.__name__
     # print ('[{}] initializing ...'.format(classname))
@@ -63,29 +61,29 @@ class PositionalEncoding(nn.Module):
         pos_encoding = self.pe[:seq_len, :]
 
         if bsz is not None:
-          pos_encoding = pos_encoding.expand(seq_len, bsz, -1)
+            pos_encoding = pos_encoding.expand(seq_len, bsz, -1)
 
         return pos_encoding
 
 class TokenEmbedding(nn.Module):
-  def __init__(self, n_token, d_embed, d_proj):
-    super(TokenEmbedding, self).__init__()
+    def __init__(self, n_token, d_embed, d_proj):
+        super(TokenEmbedding, self).__init__()
 
-    self.n_token = n_token
-    self.d_embed = d_embed
-    self.d_proj = d_proj
-    self.emb_scale = d_proj ** 0.5
+        self.n_token = n_token
+        self.d_embed = d_embed
+        self.d_proj = d_proj
+        self.emb_scale = d_proj ** 0.5
 
-    self.emb_lookup = nn.Embedding(n_token, d_embed)
-    if d_proj != d_embed:
-      self.emb_proj = nn.Linear(d_embed, d_proj, bias=False)
-    else:
-      self.emb_proj = None
+        self.emb_lookup = nn.Embedding(n_token, d_embed)
+        if d_proj != d_embed:
+            self.emb_proj = nn.Linear(d_embed, d_proj, bias=False)
+        else:
+            self.emb_proj = None
 
-  def forward(self, inp_tokens):
-    inp_emb = self.emb_lookup(inp_tokens)
-    
-    if self.emb_proj is not None:
-      inp_emb = self.emb_proj(inp_emb)
+    def forward(self, inp_tokens):
+        inp_emb = self.emb_lookup(inp_tokens)
+        
+        if self.emb_proj is not None:
+            inp_emb = self.emb_proj(inp_emb)
 
-    return inp_emb.mul_(self.emb_scale)
+        return inp_emb.mul_(self.emb_scale)

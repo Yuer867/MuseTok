@@ -3,16 +3,14 @@ sys.path.append('./model')
 
 import wandb
 import shutil
-import random
 import numpy as np
-random.seed(42)
 
 import torch
 from torch import optim
 from torch.utils.data import DataLoader
 
 from model.musetok import TransformerResidualVQ
-from dataloader import REMIFullSongTransformerDataset
+from dataloader import REMIEventDataset
 from utils import pickle_load
 
 import yaml
@@ -20,7 +18,6 @@ config_path = sys.argv[1]
 config = yaml.load(open(config_path, 'r'), Loader=yaml.FullLoader)
 
 mconf = config['model']
-
 device = config['training']['device']
 trained_steps = config['training']['trained_steps']
 lr_decay_steps = config['training']['lr_decay_steps']
@@ -28,7 +25,7 @@ lr_warmup_steps = config['training']['lr_warmup_steps']
 max_lr, min_lr = config['training']['max_lr'], config['training']['min_lr']
 beta = config['training']['beta']
 
-ckpt_dir = './ckpt/enc_dec_12L-16_bars-seqlen_1280-n{}-s{}-d{}'.format(
+ckpt_dir = './ckpt/rec_12L-16_bars-seqlen_1280-n{}-s{}-d{}'.format(
             mconf['num_quantizers'], mconf['codebook_size'], mconf['d_latent'])
 params_dir = os.path.join(ckpt_dir, 'params/')
 optim_dir = os.path.join(ckpt_dir, 'optim/')
@@ -131,8 +128,8 @@ def train_model(epoch, model, dloader, dloader_val, optim, sched):
 
 def validate(model, dloader):
     model.eval()
-    recons_loss = []
-    commit_loss = []
+    recons_losses = []
+    commit_losses = []
     acc_all = []
 
     print ('[info] validating ...')
@@ -160,14 +157,14 @@ def validate(model, dloader):
             if not (batch_idx + 1) % 10:
                 print ('batch #{}: RC {}, acc {}'.format(batch_idx + 1, round(losses['recons_loss'].item(), 3), round(acc, 3)))
 
-            recons_loss.append(losses['recons_loss'].item())
-            commit_loss.append(losses['commit_loss'].item())
+            recons_losses.append(losses['recons_loss'].item())
+            commit_losses.append(losses['commit_loss'].item())
             acc_all.append(acc)
     
-    return recons_loss, commit_loss, acc_all
+    return recons_losses, commit_losses, acc_all
 
 if __name__ == "__main__":
-    dset = REMIFullSongTransformerDataset(
+    dset = REMIEventDataset(
         config['data']['data_dir'],
         config['data']['vocab_path'],
         do_augment=config['data']['do_augment'],
@@ -180,7 +177,7 @@ if __name__ == "__main__":
         density2pieces=pickle_load(config['data']['density_path']),
         pad_to_same=True
     )
-    dset_val = REMIFullSongTransformerDataset(
+    dset_val = REMIEventDataset(
         config['data']['data_dir'], 
         config['data']['vocab_path'], 
         do_augment=False, 
@@ -200,8 +197,7 @@ if __name__ == "__main__":
         mconf['dec_n_layer'], mconf['dec_n_head'], mconf['dec_d_model'], mconf['dec_d_ff'],
         mconf['d_latent'], mconf['d_embed'], dset.vocab_size,
         mconf['num_quantizers'], mconf['codebook_size'],
-        rotation_trick=mconf['rotation_trick'],
-        rvq_type=mconf['rvq_type']
+        rotation_trick=mconf['rotation_trick'], rvq_type=mconf['rvq_type']
     ).to(device)
     if pretrained_params_path:
         model.load_state_dict(torch.load(pretrained_params_path))
