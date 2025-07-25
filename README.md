@@ -15,7 +15,7 @@ pip install -r requirements.txt
 
 ## Quick Start
 
-Download and unzip best weights in the root directory. 
+Download and unzip [best weights](https://drive.google.com/file/d/1HK534lEVdHYl3HMRkKvz8CWYliXRmOq_/view?usp=sharing) in the root directory. 
 
 ### Music Generation
 
