@@ -6,6 +6,7 @@ random.seed(0)
 import torch
 import yaml
 import numpy as np
+import argparse
 
 from dataloader import RVQTokenDataset, REMIEventDataset
 from model.musetok import GPT2TokenGenerator, TransformerResidualVQ
@@ -13,21 +14,6 @@ from utils import pickle_load, numpy_to_tensor, tensor_to_numpy
 from remi2midi import remi2midi
 
 DEFAULT_TEMPO = 110
-
-config_path = sys.argv[1]
-config = yaml.load(open(config_path, 'r'), Loader=yaml.FullLoader)
-device = config['training']['device']
-
-tokenizer_path = config['tokenizer']['pretrained_tokenizer_path']
-if tokenizer_path is None:
-    raise ValueError('please provide tokenizer path')
-else:
-    print('tokenizer:', tokenizer_path)
-
-generator_path = sys.argv[2]
-out_dir = sys.argv[3]
-n_pieces = int(sys.argv[4])
-n_samples_per_piece = int(sys.argv[5])
 
 ###########################################
 # little helpers
@@ -210,6 +196,47 @@ def generate_tokens(model, primer, primer_n_bar=0,
 
 
 if __name__ == "__main__":
+    # configuration
+    parser = argparse.ArgumentParser(description='')
+    parser.add_argument('-c', '--configuration',
+                            default='config/generation.yaml',
+                            help='configurations of generation')
+    parser.add_argument('-m', '--model',
+                            default='ckpt/best_generator/model.pt',
+                            help='model checkpoint to use')
+    parser.add_argument('-p', '--use_prompt', action='store_true',
+                            help='whether to use prompts for continuation')
+    parser.add_argument('-b', '--primer_n_bar', default=4,
+                            help='number of bars to use as prompts')
+    parser.add_argument('-o', '--output_dir',
+                        default='samples/generation',
+                        help='output directory to keep generation results')
+    parser.add_argument('-n', '--n_pieces',
+                        default=20,
+                        help='number of pieces to generate')
+    parser.add_argument('-s', '--n_samples',
+                        default=1,
+                        help='number of samples to generate per piece')
+    args = parser.parse_args()
+    
+    config_path = args.configuration
+    config = yaml.load(open(config_path, 'r'), Loader=yaml.FullLoader)
+    device = config['training']['device']
+
+    tokenizer_path = config['tokenizer']['pretrained_tokenizer_path']
+    if tokenizer_path is None:
+        raise ValueError('please provide tokenizer path')
+    else:
+        print('tokenizer:', tokenizer_path)
+
+    generator_path = args.model
+    use_prompt = args.use_prompt
+    primer_n_bar = args.primer_n_bar
+    n_pieces = int(args.n_pieces)
+    n_samples_per_piece = int(args.n_samples)
+    out_dir = args.output_dir
+    
+    # datasets
     dset_tokens = RVQTokenDataset(
         data_dir=config['data']['data_dir'],
         pieces=pickle_load(config['data']['test_split']),
@@ -228,6 +255,7 @@ if __name__ == "__main__":
         shuffle=False, do_augment=False, appoint_st_bar=0
     )
     
+    # model architecture
     mconf = config['model']
     generator = GPT2TokenGenerator(
         mconf['dec_n_layer'], mconf['dec_n_head'], mconf['dec_d_model'], mconf['dec_d_ff'],
@@ -255,9 +283,7 @@ if __name__ == "__main__":
     num_tokens = config['generate']['num_quantizers']
     codebook_size = config['generate']['codebook_size']
     
-    use_prompt = False
     print('[use prompt]', use_prompt)
-    primer_n_bar = 4
     if use_prompt:
         # randomly sample pieces from test set
         pieces = random.sample(range(len(dset_tokens)), n_pieces)
