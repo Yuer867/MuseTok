@@ -70,7 +70,7 @@ def top(probs):
 # generation
 ########################################
 def decode_tokens(
-        model, latents, event2idx, idx2event, 
+        model, latents, event2idx, idx2event, device,
         max_events=12800, time_signature=None
     ):
     latent_placeholder = torch.zeros(max_events, 1, latents.size(-1)).to(device)
@@ -339,7 +339,7 @@ if __name__ == "__main__":
             # decode generated tokens to music
             song, t_sec = decode_tokens(
                             tokenizer, gen_latents,
-                            dset_music.event2idx, dset_music.idx2event,
+                            dset_music.event2idx, dset_music.idx2event, device,
                             max_events=12800)
 
             times.append(t_sec)

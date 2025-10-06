@@ -4,6 +4,10 @@ This is the official code implementation for the paper:
 
 **MuseTok: Symbolic Music Tokenization for Hierarchical Generation and Semantic Understanding.**
 
+## Interactive Examples
+Play with MuseTok directly through Colab notebooks for [music tokenization](https://drive.google.com/file/d/1h76QRu7CvO7WZ-TWFuX-bU8mXVtKhsql/view?usp=sharing) and [music generation](https://drive.google.com/file/d/1YnB0aT-A2w9XDZFjlo4y9uGXxz_vIKjB/view?usp=sharing)!
+
+
 ## Environment
 
 * Python 3.10 and torch==2.5.1 used for the experiments
@@ -41,10 +45,6 @@ python test_generation.py \
         --output_dir=samples/generation
 ```
 
-TODO: 
-1. encode midi data into musetok tokens
-2. colab file for generation by continuing user inputs
-
 
 ## Train the model
 
@@ -65,7 +65,7 @@ Test the reconstruction quality with music pieces in the test sets:
 python test_reconstruction.py config/tokenization.yaml ckpt/best_tokenizer/model.pt samples/reconstruction 20
 ```
 
-### Hierarchical music generation
+### Music generation
 
 1. Encode REMI sequences to RVQ tokens offline with data augmentation. Skip this step if you would like to use the tokens encoded with provided tokenizer weights for training **and** have downloaded the datasets in the `Data Preparation` step. 
 

@@ -4,7 +4,7 @@ import math
 import numpy as np
 
 import torch
-from .utils import pickle_load, pickle_dump, numpy_to_tensor, tensor_to_numpy
+from utils import pickle_load, pickle_dump, numpy_to_tensor, tensor_to_numpy
 
 def convert_event(event_seq, event2idx, to_ndarr=True):
     if isinstance(event_seq[0], dict):
