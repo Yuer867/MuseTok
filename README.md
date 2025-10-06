@@ -49,7 +49,7 @@ python test_generation.py \
 ## Train the model
 
 ### Data Preparation
-Download the datasets used in the paper from [link] and unzip in the root directory `MuseTok`. To train with customized datasets, please refer to the [steps](https://github.com/Yuer867/MuseTok/tree/main/data_processing#readme).
+Download the datasets used in the paper (to be released) and unzip in the root directory `MuseTok`. To train with customized datasets, please refer to the [steps](https://github.com/Yuer867/MuseTok/tree/main/data_processing#readme).
 
 ### Music Tokenization
 
