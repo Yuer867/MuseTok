@@ -6,7 +6,7 @@ from transformers.models.gpt2.configuration_gpt2 import GPT2Config
 from transformers.models.gpt2.modeling_gpt2 import GPT2Block
 from vector_quantize_pytorch import ResidualVQ, ResidualSimVQ, ResidualFSQ
 
-from transformer_helpers import (
+from .transformer_helpers import (
     weights_init, PositionalEncoding, TokenEmbedding, generate_causal_mask
 )
 

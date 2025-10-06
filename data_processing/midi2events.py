@@ -5,6 +5,7 @@ from glob import glob
 from tqdm import tqdm
 import collections
 from concurrent.futures import ProcessPoolExecutor
+from copy import deepcopy
 
 import miditoolkit
 from miditoolkit.midi import containers
@@ -87,6 +88,85 @@ def check_triplet(start, quantized_timing, bar_resol):
     else:
         return False
 
+
+def tick_scaling(obj, orig_ticks, is_note=False):
+    new_obj = deepcopy(obj)
+    if is_note:
+        new_obj.start = int(obj.start / orig_ticks * BEAT_RESOL)
+        duration = obj.end - obj.start
+        new_duration = int(duration / orig_ticks * BEAT_RESOL)
+        new_obj.end = new_obj.start + new_duration
+    else:
+        new_obj.time = int(obj.time / orig_ticks * BEAT_RESOL)
+    return new_obj
+
+
+def tick_change(orig_midi_obj):
+    new_midi_obj = miditoolkit.midi.parser.MidiFile(ticks_per_beat=BEAT_RESOL)
+    orig_ticks = orig_midi_obj.ticks_per_beat
+
+    orig_time_changes = orig_midi_obj.time_signature_changes
+    if len(orig_time_changes) > 0:
+        new_midi_obj.time_signature_changes = [tick_scaling(i, orig_ticks) for i in orig_time_changes]
+    
+    orig_tempo_changes = orig_midi_obj.tempo_changes
+    if len(orig_tempo_changes) > 0:
+        new_midi_obj.tempo_changes = [tick_scaling(i, orig_ticks) for i in orig_tempo_changes]
+    
+    notes = []
+    new_midi_obj.instruments.append(containers.Instrument(program=0, is_drum=False, name='piano'))
+    for track in orig_midi_obj.instruments:
+        notes += [tick_scaling(note, orig_ticks, is_note=True) for note in track.notes]
+    notes = sorted(notes, key=lambda x: (x.start, x.pitch))
+    new_midi_obj.instruments[0].notes = notes
+    
+    return new_midi_obj
+
+
+def midi_analyzer(midi_path):
+    # load midi obj
+    print('[info] Represent MIDI file {} ...'.format(midi_path))
+    midi_obj = miditoolkit.midi.parser.MidiFile(midi_path)
+    
+    if midi_obj.ticks_per_beat != 480:
+        print('[info] ticks_per_beat = {}, adjust to 480'.format(midi_obj.ticks_per_beat))
+        midi_obj = tick_change(midi_obj)
+    assert midi_obj.ticks_per_beat == 480, f"{midi_obj.ticks_per_beat}"
+    
+    notes = []
+    for instrument in midi_obj.instruments:
+        notes += instrument.notes
+    if len(notes) == 0:
+        raise ValueError('Detected empty MIDI file!')
+    notes = sorted(notes, key=lambda x: (x.start, x.pitch))
+    
+    # assert len(midi_obj.time_signature_changes) == 1, midi_obj.time_signature_changes
+    if len(midi_obj.time_signature_changes) == 0:
+        print('[info] No time signature provided. Default to 4/4.')
+        time_sig = containers.TimeSignature(numerator=4, denominator=4, time=0)
+    else:
+        time_sig = midi_obj.time_signature_changes[0]
+        print('[info] time signature = {}/{}'.format(time_sig.numerator, time_sig.denominator))
+    quarters_per_bar = 4 * time_sig.numerator / time_sig.denominator
+    bar_resol = int(BEAT_RESOL * quarters_per_bar)
+
+    # new midi obj
+    new_midi_obj = miditoolkit.midi.parser.MidiFile()
+    new_midi_obj.time_signature_changes.append(containers.TimeSignature(numerator=time_sig.numerator, denominator=time_sig.denominator, time=0))
+    new_midi_obj.tempo_changes.append(containers.TempoChange(tempo=float(DEFAULT_TEMPO), time=0))
+    new_midi_obj.instruments.append(containers.Instrument(program=0, is_drum=False, name='piano'))
+    new_midi_obj.ticks_per_beat = BEAT_RESOL
+    new_midi_obj.instruments[0].notes = notes
+
+    # --- global tempo --- #
+    tempos = [b.tempo for b in midi_obj.tempo_changes][:40]
+    tempo_median = np.median(tempos)
+    global_bpm = int(tempo_median)
+    new_midi_obj.markers.insert(0, containers.Marker(text='global_bpm_' + str(int(global_bpm)), time=0))
+
+    # save
+    new_midi_obj.instruments[0].name = 'piano'
+    return new_midi_obj, bar_resol
 
 
 def analyzer(midi_path):
@@ -444,16 +524,10 @@ def create_event(name, value):
     return event
 
 
-def corpus2events(data, bar_resol, has_velocity=True, time_first=True, repeat_beat=False, remove_short=False):
+def corpus2events(data, bar_resol, has_velocity=False, time_first=False, repeat_beat=False, remove_short=False):
     """
-        convert data to lead sheet events
-        (1) relative = False
-        - Emotion - (Key) - Track(Melody) - Bar - Beat_0 - Note_Pitch - Note_Duration - Beat_1 - ... - EOS
-        - Track(Chord) - Bar - Beat_0 - Chord_0_M - Beat_4 - Chord_0_M - Beat_8 - ...
-        (2) relative = True
-        - Emotion - (Key) - Track(Melody) - Bar - Beat_0 - Note_Octave - Note_Degree - Note_Duration - Beat_1 - ... - EOS
-        - Track(Chord) - Bar - Beat_0 - Chord_I_M - Beat_4 - Chord_I_M - Beat_8 - ...
-        """
+    convert data to events
+    """
     # global tag
     global_end = data['metadata']['last_bar'] * bar_resol
     

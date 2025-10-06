@@ -6,7 +6,7 @@ This is the official code implementation for the paper:
 
 ## Environment
 
-* Python 3.10 and torch==2.5.1 used in this paper
+* Python 3.10 and torch==2.5.1 used for the experiments
 * Install dependencies
 
 ```
@@ -19,7 +19,7 @@ Download and unzip [best weights](https://drive.google.com/file/d/1HK534lEVdHYl3
 
 ### Music Generation
 
-Generate music pieces by continuing the prompts from our test sets with the hierarchical music generation framework:
+Generate music pieces by continuing the prompts from our test sets with the two-stage music generation framework:
 
 ```
 python test_generation.py \
