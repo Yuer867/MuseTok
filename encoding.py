@@ -1,15 +1,9 @@
-import sys, os
+import sys
 sys.path.append('./model')
-import yaml
 import math
 import numpy as np
-from tqdm import tqdm
-from glob import glob
 
 import torch
-from torch.utils.data import Dataset
-
-from model.musetok import TransformerResidualVQ
 from utils import pickle_load, pickle_dump, numpy_to_tensor, tensor_to_numpy
 
 def convert_event(event_seq, event2idx, to_ndarr=True):
