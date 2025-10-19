@@ -2,7 +2,7 @@
 
 This is the official code implementation for the paper: 
 
-**MuseTok: Symbolic Music Tokenization for Hierarchical Generation and Semantic Understanding.**
+**MuseTok: Symbolic Music Tokenization for Generation and Semantic Understanding.**
 
 ## Interactive Examples
 Play with MuseTok directly through Colab notebooks for [music tokenization](https://drive.google.com/file/d/1h76QRu7CvO7WZ-TWFuX-bU8mXVtKhsql/view?usp=sharing) and [music generation](https://drive.google.com/file/d/1YnB0aT-A2w9XDZFjlo4y9uGXxz_vIKjB/view?usp=sharing)!
